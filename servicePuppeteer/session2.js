@@ -150,8 +150,7 @@ async function main() {
 
         async function playBaccaratLoop(gh, gc) {
             try {
-                await clickButton(logsNameProgress, gh, process.env.CLICK_IN_TABLE_GAME, 'VÀO BÀN BACCARAT', 2);
-                await gh.hover(process.env.CLICK_IN_TABLE_GAME);
+                await clickBaccaratTable(logsNameProgress, gh);
                 await helper.delay(30000);
                 await clickButtonOptional(logsNameProgress, gc, 'button#goHome2', 'TRỞ VỀ SẢNH GAME', 2);
                 await helper.delay(2000);
@@ -303,6 +302,54 @@ async function clickButtonOptional(logsNameProgress, target, classElement, msg =
         await helper.delay(1000);
     }
     return false;
+}
+
+async function clickBaccaratTable(logsNameProgress, frame) {
+    const selectors = [
+        process.env.CLICK_IN_TABLE_GAME,
+        'div.vue-recycle-scroller__item-view div.relative.cursor-pointer',
+        'div.vue-recycle-scroller__item-view [class*="cursor-pointer"]',
+        '.vue-recycle-scroller__item-view',
+    ].filter(Boolean);
+
+    for (const selector of selectors) {
+        try {
+            const elements = await frame.$$(selector);
+            await helper.appendToLog(`CHECK SELECTOR BÀN => ${selector} | tìm thấy ${elements.length}`, logsNameProgress);
+            for (let i = 0; i < Math.min(elements.length, 8); i++) {
+                const el = elements[i];
+                const visible = await el.isVisible().catch(() => false);
+                if (!visible) continue;
+                await el.scrollIntoViewIfNeeded().catch(() => {});
+                try {
+                    await el.click({ clickCount: 2, timeout: 5000 });
+                } catch (error) {
+                    await el.click({ timeout: 5000 });
+                }
+                await el.hover().catch(() => {});
+                await helper.appendToLog(`DOUBLE CLICK => VÀO BÀN BACCARAT THÀNH CÔNG bằng selector ${selector} [${i}]`, logsNameProgress);
+                return true;
+            }
+        } catch (error) {
+            await helper.appendToLog(`CHECK SELECTOR BÀN LỖI => ${selector}: ${error.message}`, logsNameProgress);
+        }
+    }
+
+    await dumpFrameDebug(logsNameProgress, frame, 'khong_tim_thay_ban_baccarat');
+    throw new Error('Không tìm thấy selector vào bàn baccarat');
+}
+
+async function dumpFrameDebug(logsNameProgress, frame, name) {
+    try {
+        const dir = path.join(__dirname, 'debug');
+        await fs.mkdir(dir, { recursive: true });
+        const filePath = path.join(dir, `${name}-${Date.now()}.html`);
+        const html = await frame.content();
+        await fs.writeFile(filePath, html.slice(0, 500000), 'utf8');
+        await helper.appendToLog(`DEBUG iframe HTML đã lưu: ${filePath}`, logsNameProgress);
+    } catch (error) {
+        await helper.appendToLog(`DEBUG iframe HTML lỗi: ${error.message}`, logsNameProgress);
+    }
 }
 
 async function scrollDownSlowly(logsNameProgress, frame, duration = 2000, msg = 'SCROLL DOWN') {
