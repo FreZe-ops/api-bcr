@@ -18,6 +18,7 @@ let seamlessFrame;
 let gameHallFrame;
 let gameCurrentFrame;
 let lastNetworkHallSessionId;
+let gklamNetworkHitCount = 0;
 let timeSendSessionDelay = Number(account.timeSendSessionDelay);
 let timeSendSessionNearest = helper.getCurrentTime().timeUnix;
 const username_game = account.username_game;
@@ -40,6 +41,7 @@ async function main() {
             ignoreHTTPSErrors: true,
         });
         page = context.pages()[0] || await context.newPage();
+        attachSessionCollector();
 
         await helper.appendToLog('BẮT ĐẦU CHƯƠNG TRÌNH FIREFOX - GHI LOGS', logsNameProgress);
         await helper.appendToLog('='.repeat(50), logsNameProgress);
@@ -51,22 +53,6 @@ async function main() {
             if (/Firebase.*auth\/argument-error/i.test(msg)) return;
             helper.appendToLog(`Page uncaught exception: ${msg}`, logsNameProgress);
         });
-
-        function startCollectingResponses(page, frames = []) {
-            isCollecting = true;
-            const handleResponse = async (response) => {
-                const resSession = await request.CollectingResponseSession(response, isCollecting);
-                if (typeof resSession !== 'string' || !/^[a-zA-Z0-9]+$/.test(resSession)) return;
-                lastNetworkHallSessionId = resSession;
-                const timeUnixCurrent = helper.getCurrentTime().timeUnix;
-                if (timeUnixCurrent <= (timeSendSessionNearest + timeSendSessionDelay)) return;
-                timeSendSessionNearest = timeUnixCurrent;
-                await helper.appendToLog(`(NETWORK/gklam) hall sessionId:: ${resSession}`, logsNameProgress);
-                sendSessionData(resSession, nameServiceSocket);
-            };
-            page.on('response', handleResponse);
-            frames.forEach(frame => { if (frame && frame.on) frame.on('response', handleResponse); });
-        }
 
         await page.goto(DOMAIN, { waitUntil: 'load', timeout: 60000 });
         console.log('Trang web đã được load xong');
@@ -101,19 +87,38 @@ async function main() {
         seamlessFrame = await seamlessEl.contentFrame();
         if (!seamlessFrame) throw new Error('Không lấy được contentFrame của iframe#seamless-game');
 
-        await seamlessFrame.waitForSelector('iframe#iframeGameHall', { timeout: 90000, state: 'attached' });
-        await page.waitForTimeout(1000);
-        let gameHallEl = await seamlessFrame.$('iframe#iframeGameHall');
-        if (!gameHallEl) throw new Error('Không tìm thấy iframe#iframeGameHall');
-        gameHallFrame = await gameHallEl.contentFrame();
-        if (!gameHallFrame) throw new Error('Không lấy được contentFrame của iframe#iframeGameHall');
+        let gameHallEl = null;
+        let gameEl = null;
+        try {
+            await seamlessFrame.waitForSelector('iframe#iframeGameHall', { timeout: 90000, state: 'attached' });
+            await page.waitForTimeout(2000);
+            gameHallEl = await seamlessFrame.$('iframe#iframeGameHall');
+        } catch (e) {
+            await helper.appendToLog('Timeout iframeGameHall - thử fallback childFrames', logsNameProgress);
+        }
+        if (gameHallEl) {
+            gameHallFrame = await gameHallEl.contentFrame();
+        }
+        if (!gameHallFrame && seamlessFrame.childFrames) {
+            const children = seamlessFrame.childFrames();
+            if (children.length >= 1) gameHallFrame = children[0];
+            if (children.length >= 2) gameCurrentFrame = children[1];
+            if (gameHallFrame || gameCurrentFrame) await helper.appendToLog('Dùng fallback childFrames', logsNameProgress);
+        }
+        if (!gameHallFrame) throw new Error('Không tìm thấy iframeGameHall - trang có thể báo lỗi (status 1004)');
 
-        await seamlessFrame.waitForSelector('iframe#iframeGame', { timeout: 90000, state: 'attached' });
-        await page.waitForTimeout(1000);
-        const gameEl = await seamlessFrame.$('iframe#iframeGame');
-        if (!gameEl) throw new Error('Không tìm thấy iframe#iframeGame');
-        gameCurrentFrame = await gameEl.contentFrame();
-        if (!gameCurrentFrame) throw new Error('Không lấy được contentFrame của iframe#iframeGame');
+        if (!gameCurrentFrame) {
+            try {
+                await seamlessFrame.waitForSelector('iframe#iframeGame', { timeout: 30000, state: 'attached' });
+                await page.waitForTimeout(1000);
+                gameEl = await seamlessFrame.$('iframe#iframeGame');
+                if (gameEl) gameCurrentFrame = await gameEl.contentFrame();
+            } catch (e) {}
+            if (!gameCurrentFrame && seamlessFrame.childFrames && seamlessFrame.childFrames().length >= 2) {
+                gameCurrentFrame = seamlessFrame.childFrames()[1];
+            }
+        }
+        if (!gameCurrentFrame) throw new Error('Không tìm thấy iframeGame - trang có thể báo lỗi');
 
         await scrollDownSlowly(logsNameProgress, page, 2000, 'CUỘN TRANG XUỐNG > TOÀN MÀN HÌNH GAME');
         await clickButtonNotifiGame(logsNameProgress, gameHallFrame, 'button.size-8.cursor-pointer.outline-none', 'TẮT THÔNG BÁO GAME SEXY');
@@ -125,11 +130,29 @@ async function main() {
             if (f) gameHallFrame = f;
         }
 
-        startCollectingResponses(page, [seamlessFrame, gameHallFrame, gameCurrentFrame]);
+        await logFrameSessionDebug('hall-ready');
         await pushGklamHallSessionRetry('hall-ready', 6, 5000);
-        await startBaccaratCycle(gameHallFrame, gameCurrentFrame);
+        await startBaccaratCycle();
 
-        async function playBaccaratLoop(gh, gc) {
+        async function refreshGameFrames() {
+            if (!seamlessFrame) return { gh: gameHallFrame, gc: gameCurrentFrame };
+            try {
+                const gameHallEl = await seamlessFrame.$('iframe#iframeGameHall');
+                if (gameHallEl) {
+                    const f = await gameHallEl.contentFrame();
+                    if (f) gameHallFrame = f;
+                }
+                const gameEl = await seamlessFrame.$('iframe#iframeGame');
+                if (gameEl) {
+                    const f = await gameEl.contentFrame();
+                    if (f) gameCurrentFrame = f;
+                }
+            } catch (e) {}
+            return { gh: gameHallFrame, gc: gameCurrentFrame };
+        }
+
+        async function playBaccaratLoop() {
+            const { gh, gc } = await refreshGameFrames();
             const enteredTable = await clickButtonOptional(
                 logsNameProgress, gh, process.env.CLICK_IN_TABLE_GAME, 'VÀO BÀN BACCARAT', 2, 10
             );
@@ -142,11 +165,11 @@ async function main() {
             await helper.delay(2000);
         }
 
-        async function startBaccaratCycle(gh, gc) {
+        async function startBaccaratCycle() {
             const interval = 2 * (60 * 1000);
             while (true) {
                 await helper.appendToLog('Bắt đầu chu kỳ baccarat', logsNameProgress);
-                await playBaccaratLoop(gh, gc);
+                await playBaccaratLoop();
                 await helper.appendToLog('Chờ đến chu kỳ tiếp theo...', logsNameProgress);
                 await helper.delay(interval);
             }
@@ -165,6 +188,93 @@ async function sendSessionData(sessionId, nameService) {
         socket.emit('session', { sessionId, nameService, stampTime: helper.getCurrentTime().timeUnix });
         await helper.appendToLog(`(SOCKET) send server sessionId:: ${sessionId}`, logsNameProgress);
     }
+}
+
+function attachSessionCollector() {
+    isCollecting = true;
+    gklamNetworkHitCount = 0;
+    context.on('response', onHallNetworkResponse);
+    page.on('response', onHallNetworkResponse);
+}
+
+async function onHallNetworkResponse(response) {
+    if (!isCollecting) return;
+    try {
+        const url = response.url();
+        if (/gklam\.com|awamat\.com/i.test(url)) {
+            gklamNetworkHitCount++;
+            if (gklamNetworkHitCount <= 8) {
+                await helper.appendToLog(`(NETWORK) gklam #${gklamNetworkHitCount}: ${url.slice(0, 140)}`, logsNameProgress);
+            }
+        }
+    } catch (error) {}
+    const resSession = await request.CollectingResponseSession(response, isCollecting);
+    if (typeof resSession !== 'string' || !/^[a-zA-Z0-9]+$/.test(resSession)) return;
+    lastNetworkHallSessionId = resSession;
+    await tryEmitValidHallSession(`network:${resSession.slice(0, 8)}`);
+}
+
+async function extractSessionFromFrame(frame) {
+    if (!frame) return undefined;
+    try {
+        const fromUrl = request.extractSessionIdFromUrl(frame.url());
+        if (fromUrl) return fromUrl;
+        const fromDom = await frame.evaluate(() => {
+            const href = window.location.href;
+            const urlMatch = href.match(/jsessionid[=;/]([^?&;\s]+)/i);
+            if (urlMatch) return urlMatch[1];
+            const cookieMatch = document.cookie.match(/JSESSIONID=([^;]+)/i);
+            return cookieMatch ? cookieMatch[1] : null;
+        }).catch(() => null);
+        return fromDom || undefined;
+    } catch (error) {
+        return undefined;
+    }
+}
+
+async function resolveHallSessionId() {
+    if (lastNetworkHallSessionId) return lastNetworkHallSessionId;
+    for (const frame of [gameCurrentFrame, gameHallFrame, seamlessFrame]) {
+        const sessionId = await extractSessionFromFrame(frame);
+        if (sessionId) {
+            lastNetworkHallSessionId = sessionId;
+            return sessionId;
+        }
+    }
+    return await getGklamSessionFromCookies();
+}
+
+async function logFrameSessionDebug(label) {
+    const frames = [
+        ['seamless', seamlessFrame],
+        ['gameHall', gameHallFrame],
+        ['gameCurrent', gameCurrentFrame],
+    ];
+    for (const [name, frame] of frames) {
+        if (!frame) continue;
+        const url = frame.url();
+        const sid = request.extractSessionIdFromUrl(url) || await extractSessionFromFrame(frame);
+        await helper.appendToLog(`(DEBUG) ${label} ${name} url=${url.slice(0, 120)} session=${sid || 'none'}`, logsNameProgress);
+        if (sid) lastNetworkHallSessionId = sid;
+    }
+    await helper.appendToLog(`(DEBUG) ${label} gklam network hits=${gklamNetworkHitCount}`, logsNameProgress);
+}
+
+async function tryEmitValidHallSession(source) {
+    const sessionId = await resolveHallSessionId();
+    if (!sessionId) return false;
+    const data = await request.requestData(sessionId);
+    const tableCount = Array.isArray(data?.tableItems) ? data.tableItems.length : 0;
+    if (tableCount === 0) {
+        await helper.appendToLog(`(SESSION) invalid tableItems=0 source=${source} id=${sessionId.slice(0, 8)}`, logsNameProgress);
+        return false;
+    }
+    const timeUnixCurrent = helper.getCurrentTime().timeUnix;
+    if (timeUnixCurrent <= (timeSendSessionNearest + timeSendSessionDelay)) return true;
+    timeSendSessionNearest = timeUnixCurrent;
+    await helper.appendToLog(`(SESSION) valid hall session tableItems=${tableCount} source=${source}`, logsNameProgress);
+    sendSessionData(sessionId, nameServiceSocket);
+    return true;
 }
 
 async function getGklamSessionFromCookies() {
@@ -196,17 +306,12 @@ async function getGklamSessionFromCookies() {
 }
 
 async function pushGklamHallSession(label = 'hall') {
-    let sessionId = lastNetworkHallSessionId;
-    if (!sessionId) sessionId = await getGklamSessionFromCookies();
-    if (!sessionId) {
-        await helper.appendToLog(`(SESSION) chưa có hall session [${label}]`, logsNameProgress);
+    await logFrameSessionDebug(label);
+    const ok = await tryEmitValidHallSession(label);
+    if (!ok) {
+        await helper.appendToLog(`(SESSION) chưa có hall session hợp lệ [${label}]`, logsNameProgress);
         return false;
     }
-    const timeUnixCurrent = helper.getCurrentTime().timeUnix;
-    if (timeUnixCurrent <= (timeSendSessionNearest + timeSendSessionDelay)) return true;
-    timeSendSessionNearest = timeUnixCurrent;
-    await helper.appendToLog(`(SESSION) push hall sessionId:: ${sessionId} [${label}]`, logsNameProgress);
-    sendSessionData(sessionId, nameServiceSocket);
     return true;
 }
 
@@ -235,6 +340,7 @@ async function resetMain() {
         if (context) await context.close().catch(() => {});
         isCollecting = false;
         lastNetworkHallSessionId = undefined;
+        gklamNetworkHitCount = 0;
         await helper.delay(5000);
         timeSendSessionNearest = helper.getCurrentTime().timeUnix;
         await helper.appendToLog('Khởi động lại chương trình...', logsNameProgress);

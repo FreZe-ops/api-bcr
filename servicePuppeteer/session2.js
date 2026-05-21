@@ -21,8 +21,8 @@ let lastNetworkHallSessionId;
 let gklamNetworkHitCount = 0;
 let timeSendSessionDelay = Number(account.timeSendSessionDelay);
 let timeSendSessionNearest = helper.getCurrentTime().timeUnix;
-const username_game = "besuong2003";
-const password_game = "Besuong2@@3";
+const username_game = account.username_game;
+const password_game = account.password_game;
 const nameServiceSocket = account.nameServiceSocket;
 const logsNameProgress = account.logsNameProgress;
 
@@ -132,9 +132,27 @@ async function main() {
 
         await logFrameSessionDebug('hall-ready');
         await pushGklamHallSessionRetry('hall-ready', 6, 5000);
-        await startBaccaratCycle(gameHallFrame, gameCurrentFrame);
+        await startBaccaratCycle();
 
-        async function playBaccaratLoop(gh, gc) {
+        async function refreshGameFrames() {
+            if (!seamlessFrame) return { gh: gameHallFrame, gc: gameCurrentFrame };
+            try {
+                const gameHallEl = await seamlessFrame.$('iframe#iframeGameHall');
+                if (gameHallEl) {
+                    const f = await gameHallEl.contentFrame();
+                    if (f) gameHallFrame = f;
+                }
+                const gameEl = await seamlessFrame.$('iframe#iframeGame');
+                if (gameEl) {
+                    const f = await gameEl.contentFrame();
+                    if (f) gameCurrentFrame = f;
+                }
+            } catch (e) {}
+            return { gh: gameHallFrame, gc: gameCurrentFrame };
+        }
+
+        async function playBaccaratLoop() {
+            const { gh, gc } = await refreshGameFrames();
             const enteredTable = await clickButtonOptional(
                 logsNameProgress, gh, process.env.CLICK_IN_TABLE_GAME, 'VÀO BÀN BACCARAT', 2, 10
             );
@@ -147,11 +165,11 @@ async function main() {
             await helper.delay(2000);
         }
 
-        async function startBaccaratCycle(gh, gc) {
+        async function startBaccaratCycle() {
             const interval = 2 * (60 * 1000);
             while (true) {
                 await helper.appendToLog('Bắt đầu chu kỳ baccarat', logsNameProgress);
-                await playBaccaratLoop(gh, gc);
+                await playBaccaratLoop();
                 await helper.appendToLog('Chờ đến chu kỳ tiếp theo...', logsNameProgress);
                 await helper.delay(interval);
             }
