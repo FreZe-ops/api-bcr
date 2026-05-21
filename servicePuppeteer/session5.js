@@ -1,13 +1,11 @@
 const { firefox } = require("playwright");
-const path = require("path");
-require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
+require("dotenv").config();
 const io = require("socket.io-client");
 const fs = require("fs").promises;
+const path = require("path");
 
 const { request, imageCapcha, helper } = require("../utilities");
 const { account_1: account } = require("./account.puppeteer");
-
-const DOMAIN = process.env.DOMAIN || "https://www.rr5309.com";
 
 let isCollecting = false;
 let socket;
@@ -142,9 +140,10 @@ async function main() {
     });
 
     page.on("pageerror", async (err) => {
-      const msg = (err && err.message) ? err.message : String(err);
-      if (/Firebase.*auth\/argument-error/i.test(msg)) return; // Bỏ qua lỗi Firebase từ trang đích
-      await helper.appendToLog(`Page uncaught exception: ${msg}`, logsNameProgress);
+      await helper.appendToLog(
+        `Page uncaught exception: ${err.message}`,
+        logsNameProgress
+      );
     });
 
     // Hàm thu thập response
@@ -183,7 +182,7 @@ async function main() {
     }
 
     // Truy cập trang với timeout dài hơn cho Firefox
-    await page.goto(DOMAIN, {
+    await page.goto(process.env.DOMAIN, {
       waitUntil: "networkidle",
       timeout: 120000,
     });
@@ -206,11 +205,10 @@ async function main() {
       "HIỂN THỊ DIALOG ĐĂNG NHẬP"
     );
 
-    // Bỏ qua captcha - nhập tài khoản mk luôn
-    // await page.waitForSelector("div.captcha_box img", { state: "visible", timeout: 15000 }).catch(() => {});
-    // await helper.delay(3000);
-    // const codeCapcha = await imageCapcha.getCodeCapchaLogin(logsNameProgress, page);
-    await helper.delay(1000);
+    const codeCapcha = await imageCapcha.getCodeCapchaLogin(
+      logsNameProgress,
+      page
+    );
     await fillInput(
       logsNameProgress,
       page,
@@ -223,7 +221,12 @@ async function main() {
       process.env.INPUT_PASSWORD_LOGIN,
       password_game
     );
-    // await fillInput(logsNameProgress, page, process.env.INPUT_CAPCHA_LOGIN, codeCapcha);
+    await fillInput(
+      logsNameProgress,
+      page,
+      process.env.INPUT_CAPCHA_LOGIN,
+      codeCapcha
+    );
 
     await clickButton(
       logsNameProgress,

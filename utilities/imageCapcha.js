@@ -35,32 +35,18 @@ async function handleCapchaBase64ToCode(base64Image) {
     }
 }
 
-const MAX_CAPCHA_RETRY = 10;
-
-async function getCodeCapchaLogin(logsNameProgress, page, retryCount = 0) {
-    await appendToLog("BẮT ĐẦU LẤY ẢNH CAPCHA" + (retryCount > 0 ? ` (lần ${retryCount + 1})` : ""), logsNameProgress);
-    await delay(retryCount === 0 ? 3000 : 2000);
-
-    // Chờ captcha img xuất hiện
-    try {
-        if (page.waitForSelector) {
-            await page.waitForSelector('div.captcha_box img', { timeout: 10000 }).catch(() => {});
-        }
-    } catch (_) {}
-
+async function getCodeCapchaLogin(logsNameProgress, page) {
+    await appendToLog("BẮT ĐẦU LẤY ẢNH CAPCHA", logsNameProgress)
+    await delay(2000);
     const base64Image = await page.evaluate(() => {
         const img = document.querySelector('div.captcha_box img');
-        return img ? img.getAttribute('src') || img.src : null;
+        return img ? img.getAttribute('src') : null;
     });
 
+
     if (!base64Image) {
-        if (retryCount >= MAX_CAPCHA_RETRY) {
-            await appendToLog("KHÔNG LẤY ĐƯỢC ẢNH CAPCHA SAU " + MAX_CAPCHA_RETRY + " LẦN", logsNameProgress);
-            throw new Error("Không lấy được ảnh captcha sau " + MAX_CAPCHA_RETRY + " lần thử");
-        }
-        await appendToLog("KHÔNG LẤY ĐƯỢC ẢNH CAPCHA - THỬ LẠI", logsNameProgress);
-        await delay(2000);
-        return getCodeCapchaLogin(logsNameProgress, page, retryCount + 1);
+        await appendToLog("KHÔNG LẤY ĐƯỢC ẢNH CAPCHA - THỬ LẠI", logsNameProgress)
+        return getCodeCapchaLogin(logsNameProgress, page)
     }
     await appendToLog("LẤY ẢNH CAPCHA THÀNH CÔNG", logsNameProgress)
     const codeCapcha = await handleCapchaBase64ToCode(base64Image)
