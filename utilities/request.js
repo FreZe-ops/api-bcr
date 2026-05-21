@@ -3,12 +3,6 @@ require('dotenv').config();
 
 const { getCurrentTime } = require('./helper');
 
-function extractSessionIdFromUrl(url) {
-    if (!url || typeof url !== 'string') return undefined;
-    const match = url.match(/jsessionid[=;/]([^?&;\s]+)/i);
-    return match ? match[1] : undefined;
-}
-
 async function requestData(sessionId) {
     const url = process.env.URI_REQUEST_DATA + sessionId;
 
@@ -24,23 +18,9 @@ async function requestData(sessionId) {
 
     try {
         const response = await axios.post(url, payload, { headers });
-        const tableCount = Array.isArray(response.data?.tableItems) ? response.data.tableItems.length : 0;
-        console.log(`[REQUEST_DATA] status=${response.status} tableItems=${tableCount} session=${sessionId.slice(0, 8)}...`);
-        if (tableCount === 0) {
-            const body = response.data && typeof response.data === 'object' ? response.data : {};
-            console.warn('[REQUEST_DATA] empty hall — wrong jsessionid or session expired', {
-                keys: Object.keys(body),
-                status: body.status ?? body.errorCode ?? body.code,
-                message: body.message ?? body.msg ?? body.errorMessage,
-            });
-        }
         return response.data;
     } catch (error) {
-        console.error('[REQUEST_DATA] Error calling API:', {
-            message: error.message,
-            status: error.response?.status,
-            data: error.response?.data,
-        });
+        console.error('Error calling API:', error.message);
         return {};
     }
 }
@@ -53,29 +33,19 @@ async function CollectingResponseSession(response, isCollecting) {
     const request = response.request();
     const resourceType = request.resourceType();
     try {
-        const urlMatchDomains = ['bfscg.awamat.com', 'gklam.com', 'vcnh2k.gklam.com'];
-        const urlMatches = urlMatchDomains.some(d => url.includes(d));
-        const allowedTypes = ['xhr', 'fetch', 'document', 'script', 'other', 'websocket'];
-        if (urlMatches && allowedTypes.includes(resourceType)) {
-            let sessionId = extractSessionIdFromUrl(url);
-            const isHallQuery = /queryInitWebGameHall/i.test(url);
-            if (!sessionId) {
-                const headers = request.headers();
-                const cookieHeader = headers['cookie'] || headers['Cookie'] || '';
-                const cookieMatch = cookieHeader.match(/JSESSIONID=([^;]+)/i);
-                if (cookieMatch) sessionId = cookieMatch[1];
-            }
-            if (!sessionId) {
-                const headers = response.headers();
-                const setCookieHeader = headers['set-cookie'] || headers['Set-Cookie'] || '';
-                const cookieMatch = setCookieHeader.match(/JSESSIONID=([^;]+)/i);
-                if (cookieMatch) sessionId = cookieMatch[1];
-            }
-            if (sessionId) {
-                const tag = isHallQuery ? 'HALL' : 'network';
-                console.log(`[SESSION/${tag}] Found sessionId: ${sessionId} from URL: ${url}`);
-            }
-            return sessionId || undefined;
+        // Debug log để kiểm tra
+        console.log(`[DEBUG] Response: ${resourceType} - ${url}`);
+        console.log(await response.text());
+        if ((resourceType === 'xhr' || resourceType === 'fetch') && url.includes('https://bfscg.awamat.com')) {
+            let responseBody = 'NONE';
+            let sessionId = undefined;
+            responseBody = await response.text();
+
+            const match = url.match(/jsessionid=([^?]+)/);
+            sessionId = match ? match[1] : undefined;
+            
+            console.log(`[SESSION] Found sessionId: ${sessionId} from URL: ${url}`);
+            return sessionId
         }
     } catch (error) {
         console.error('[ERROR] CollectingResponseSession:', error.message)
@@ -170,7 +140,6 @@ module.exports = {
     callQueryInitWebGameHall,
     CollectingResponseSession,
     CollectingResponseSessionV2,
-    extractSessionIdFromUrl,
     sendTelegramMessage,
     requestData,
 };

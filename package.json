@@ -23,7 +23,7 @@
     "node-telegram-bot-api": "^0.66.0",
     "nodemon": "^3.1.10",
     "npm": "^10.9.2",
-    "playwright": "^1.58.2",
+    "playwright": "^1.55.0-alpha-2025-08-10",
     "puppeteer": "^24.14.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
