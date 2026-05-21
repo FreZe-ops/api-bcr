@@ -17,7 +17,6 @@ let page;
 let seamlessFrame;
 let gameHallFrame;
 let gameCurrentFrame;
-let sessionCookiePoller;
 let timeSendSessionDelay = Number(account.timeSendSessionDelay);
 let timeSendSessionNearest = helper.getCurrentTime().timeUnix;
 const username_game = "besuong2003";
@@ -25,12 +24,10 @@ const password_game = "Besuong2@@3";
 const nameServiceSocket = account.nameServiceSocket;
 const logsNameProgress = account.logsNameProgress;
 
-const socketUrl = `${process.env.SERVER_HOSTNAME}:${process.env.SERVER_PORT}`;
-socket = io(socketUrl, { transports: ['websocket', 'polling'] });
-socket.on('connect', () => console.log(`(SOCKET) Connecting ${socketUrl}`));
-socket.on('disconnect', () => console.log('(SOCKET) Disconnected'));
-socket.on('connect_error', (e) => console.log('(SOCKET) connect_error:', e.message));
 main();
+socket = io(`${process.env.SERVER_HOSTNAME}:${process.env.SERVER_PORT}`);
+socket.on('connect', () => console.log('(SOCKET) Connecting'));
+socket.on('disconnect', () => console.log('(SOCKET) Disconnected'));
 
 async function main() {
     try {
@@ -57,19 +54,15 @@ async function main() {
         function startCollectingResponses(page, frames = []) {
             isCollecting = true;
             const handleResponse = async (response) => {
-                const url = response.url();
                 const resSession = await request.CollectingResponseSession(response, isCollecting);
                 const timeUnixCurrent = helper.getCurrentTime().timeUnix;
-                if (typeof resSession !== 'string' || !/^[^;\s]+$/.test(resSession)) return;
-                if (timeUnixCurrent <= (timeSendSessionNearest + timeSendSessionDelay)) return;
-                if (!/queryInitWebGameHall|gklam\.com/i.test(url)) return;
-                timeSendSessionNearest = timeUnixCurrent;
-                await helper.appendToLog(`(SESSION/hall) sessionId:: ${resSession}`, logsNameProgress);
-                sendSessionData(resSession, nameServiceSocket);
+                if (typeof resSession === 'string' && /^[a-zA-Z0-9]+$/.test(resSession) && timeUnixCurrent > (timeSendSessionNearest + timeSendSessionDelay)) {
+                    timeSendSessionNearest = timeUnixCurrent;
+                    sendSessionData(resSession, nameServiceSocket);
+                }
             };
             page.on('response', handleResponse);
             frames.forEach(frame => { if (frame && frame.on) frame.on('response', handleResponse); });
-            startSessionCookiePolling();
         }
 
         await page.goto(DOMAIN, { waitUntil: 'load', timeout: 60000 });
@@ -153,8 +146,10 @@ async function main() {
 
         async function playBaccaratLoop(gh, gc) {
             try {
-                await clickBaccaratTable(logsNameProgress, gh);
+                await clickButton(logsNameProgress, gh, process.env.CLICK_IN_TABLE_GAME, 'VÀO BÀN BACCARAT', 2);
+                await gh.hover(process.env.CLICK_IN_TABLE_GAME);
                 await helper.delay(30000);
+                await sendGklamHallSessionOnce();
                 await clickButtonOptional(logsNameProgress, gc, 'button#goHome2', 'TRỞ VỀ SẢNH GAME', 2);
                 await helper.delay(2000);
             } catch (error) {
@@ -194,7 +189,7 @@ async function sendSessionData(sessionId, nameService) {
     }
 }
 
-async function getSessionFromCookies() {
+async function getGklamSessionFromCookies() {
     if (!context) return undefined;
     try {
         const cookies = await context.cookies();
@@ -205,23 +200,19 @@ async function getSessionFromCookies() {
         if (!gameCookies.length) return undefined;
         return gameCookies[gameCookies.length - 1].value;
     } catch (error) {
-        await helper.appendToLog(`Không đọc được cookie session: ${error.message}`, logsNameProgress);
+        await helper.appendToLog(`Không đọc được cookie gklam: ${error.message}`, logsNameProgress);
         return undefined;
     }
 }
 
-function startSessionCookiePolling() {
-    if (sessionCookiePoller) clearInterval(sessionCookiePoller);
-    sessionCookiePoller = setInterval(async () => {
-        if (!isCollecting) return;
-        const sessionId = await getSessionFromCookies();
-        const timeUnixCurrent = helper.getCurrentTime().timeUnix;
-        if (sessionId && timeUnixCurrent > (timeSendSessionNearest + timeSendSessionDelay)) {
-            timeSendSessionNearest = timeUnixCurrent;
-            await helper.appendToLog(`(COOKIE/gklam) found sessionId:: ${sessionId}`, logsNameProgress);
-            sendSessionData(sessionId, nameServiceSocket);
-        }
-    }, 3000);
+async function sendGklamHallSessionOnce() {
+    const sessionId = await getGklamSessionFromCookies();
+    if (!sessionId) return;
+    const timeUnixCurrent = helper.getCurrentTime().timeUnix;
+    if (timeUnixCurrent <= (timeSendSessionNearest + timeSendSessionDelay)) return;
+    timeSendSessionNearest = timeUnixCurrent;
+    await helper.appendToLog(`(COOKIE/gklam) hall sessionId:: ${sessionId}`, logsNameProgress);
+    sendSessionData(sessionId, nameServiceSocket);
 }
 
 socket.on(`${nameServiceSocket}_restart`, async () => {
@@ -237,10 +228,6 @@ async function resetMain() {
     } catch (error) {
         console.error('Error during cleanup:', error.message);
     } finally {
-        if (sessionCookiePoller) {
-            clearInterval(sessionCookiePoller);
-            sessionCookiePoller = undefined;
-        }
         if (context) await context.close().catch(() => {});
         isCollecting = false;
         await helper.delay(5000);
@@ -309,54 +296,6 @@ async function clickButtonOptional(logsNameProgress, target, classElement, msg =
         await helper.delay(1000);
     }
     return false;
-}
-
-async function clickBaccaratTable(logsNameProgress, frame) {
-    const selectors = [
-        process.env.CLICK_IN_TABLE_GAME,
-        'div.vue-recycle-scroller__item-view div.relative.cursor-pointer',
-        'div.vue-recycle-scroller__item-view [class*="cursor-pointer"]',
-        '.vue-recycle-scroller__item-view',
-    ].filter(Boolean);
-
-    for (const selector of selectors) {
-        try {
-            const elements = await frame.$$(selector);
-            await helper.appendToLog(`CHECK SELECTOR BÀN => ${selector} | tìm thấy ${elements.length}`, logsNameProgress);
-            for (let i = 0; i < Math.min(elements.length, 8); i++) {
-                const el = elements[i];
-                const visible = await el.isVisible().catch(() => false);
-                if (!visible) continue;
-                await el.scrollIntoViewIfNeeded().catch(() => {});
-                try {
-                    await el.click({ clickCount: 2, timeout: 5000 });
-                } catch (error) {
-                    await el.click({ timeout: 5000 });
-                }
-                await el.hover().catch(() => {});
-                await helper.appendToLog(`DOUBLE CLICK => VÀO BÀN BACCARAT THÀNH CÔNG bằng selector ${selector} [${i}]`, logsNameProgress);
-                return true;
-            }
-        } catch (error) {
-            await helper.appendToLog(`CHECK SELECTOR BÀN LỖI => ${selector}: ${error.message}`, logsNameProgress);
-        }
-    }
-
-    await dumpFrameDebug(logsNameProgress, frame, 'khong_tim_thay_ban_baccarat');
-    throw new Error('Không tìm thấy selector vào bàn baccarat');
-}
-
-async function dumpFrameDebug(logsNameProgress, frame, name) {
-    try {
-        const dir = path.join(__dirname, 'debug');
-        await fs.mkdir(dir, { recursive: true });
-        const filePath = path.join(dir, `${name}-${Date.now()}.html`);
-        const html = await frame.content();
-        await fs.writeFile(filePath, html.slice(0, 500000), 'utf8');
-        await helper.appendToLog(`DEBUG iframe HTML đã lưu: ${filePath}`, logsNameProgress);
-    } catch (error) {
-        await helper.appendToLog(`DEBUG iframe HTML lỗi: ${error.message}`, logsNameProgress);
-    }
 }
 
 async function scrollDownSlowly(logsNameProgress, frame, duration = 2000, msg = 'SCROLL DOWN') {
