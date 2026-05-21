@@ -9,7 +9,6 @@ const cors = require('cors')
 const { exec } = require('child_process');
 
 const { getCurrentTime, isValidSession, appendToLog } = require('./utilities/helper');
-const { pipelineLog, explainInvalidSession } = require('./utilities/pipelineLog');
 const { filterData, initDatabase, checkAndUpdateDatabase } = require('./utilities/helperGameSexy');
 const { sendTelegramMessage, requestData } = require('./utilities/request');
 const { connect } = require('./config/mongo');
@@ -36,17 +35,11 @@ const io = socketIO(server, {
 });
 
 let sessionList = SESSION_LIST
-let crawlLogTick = 0
 
 io.on('connection', (socket) => {
-    console.info(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S0] socket connected: ${socket.id}`);
+    console.info(`${getCurrentTime().timeFormatted} - socket connected: ${socket.id}`);
     socket.on('session', async (payload) => {
         const { sessionId, nameService, stampTime } = payload
-        console.info(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S1] received session payload`, {
-            nameService,
-            sessionId: sessionId?.slice(0, 12),
-            stampTime,
-        });
 
         if (sessionList.session.hasOwnProperty(nameService)) {
             sessionList.session[nameService] = {
@@ -54,9 +47,9 @@ io.on('connection', (socket) => {
                 sessionId,
                 stampTime: stampTime // || Date.now()
             };
-            console.info(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S1] session stored => ${nameService} = ${sessionId?.slice(0, 12)}...`);
+            console.info(`${getCurrentTime().timeFormatted} - ${nameService || '_'} = ${sessionId || '_'}`);
         } else {
-            console.warn(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S1] ignored unknown service: ${nameService || '_'}`);
+            console.warn(`${getCurrentTime().timeFormatted} - ignored unknown session service: ${nameService || '_'}`);
         }
 
         if (nameService == "NS5") {
@@ -130,32 +123,10 @@ setInterval(async () => {
     let availableSessions = sessionKeys
         .filter(key => isValidSession(sessionList.session[key]))
         .map(key => sessionList.session[key]);
-
-    if (availableSessions.length === 0) {
-        crawlLogTick++;
-        if (crawlLogTick % 20 === 1) {
-            const pool = sessionKeys.map((key) => {
-                const item = sessionList.session[key];
-                return {
-                    key,
-                    nameService: item.nameService,
-                    sessionId: item.sessionId ? `${item.sessionId.slice(0, 8)}...` : null,
-                    stampTime: item.stampTime,
-                    reason: explainInvalidSession(item),
-                };
-            });
-            console.log(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S0] no valid session | pool=${JSON.stringify(pool)}`);
-        }
-    } else {
-        crawlLogTick = 0;
-        console.log(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S0] valid sessions=${availableSessions.length}`, availableSessions.map(s => ({
-            nameService: s.nameService,
-            sessionId: s.sessionId?.slice(0, 8),
-        })));
-    }
+        
+    console.log('check session', availableSessions)
 
     if (availableSessions.length === 0 && sessionList.sessionFailover.nameService) {
-        console.log(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S0] using failover session ${sessionList.sessionFailover.nameService}`);
         availableSessions.push(sessionList.sessionFailover)
     }
 
@@ -168,10 +139,10 @@ setInterval(async () => {
     while (availableSessions.length > 0) {
         const randomIndex = Math.floor(Math.random() * availableSessions.length);
         const selectedSession = availableSessions[randomIndex];
-        console.log(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S2] using session ${selectedSession.nameService} => ${selectedSession.sessionId?.slice(0, 12)}...`)
+        console.log(`SỬ DỤNG SESSION => ${selectedSession.sessionId}`)
         const data = await requestData(selectedSession.sessionId);
         if (!Array.isArray(data.tableItems) || data.tableItems.length === 0) {
-            console.warn(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S3] invalid hall session — no tableItems`, {
+            console.warn('[CRAWL] invalid hall session — no tableItems', {
                 keys: data && typeof data === 'object' ? Object.keys(data) : [],
                 sessionName: selectedSession.nameService,
                 sessionId: selectedSession.sessionId?.slice(0, 8),
@@ -188,15 +159,11 @@ setInterval(async () => {
             }
             return
         }
-        console.log(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S3] received tableItems=${data.tableItems.length} from ${selectedSession.nameService}`)
+        console.log(`[CRAWL] received tableItems=${data.tableItems.length} from ${selectedSession.nameService}`)
         const dataTableList = filterData(data.tableItems)
-        console.log(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S4] filterData => ${dataTableList.length} tables`)
 
         await initDatabase(dataTableList)
-        console.log(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S5] initDatabase done`)
-
         await checkAndUpdateDatabase(dataTableList)
-        console.log(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S6] checkAndUpdateDatabase done — data saved to DB`)
 
         // bắn dữ liệu
         // io.emit('test_data', {

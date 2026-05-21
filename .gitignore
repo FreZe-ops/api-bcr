@@ -1,6 +1,5 @@
 # /logs/*
 /servicePuppeteer/dataDir/*
-/servicePuppeteer/debug/*
 /node_modules
 # /utilities/image_temp/*
 eng.traineddata
