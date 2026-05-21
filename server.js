@@ -71,11 +71,19 @@ setInterval(async () => {
             if (session.stampTime > 0 && (timeUnixCurrent - session.stampTime > ((60 * 1000) * 10))) {
                 await appendToLog(`${session.nameService || key} | QUÁ 10 PHÚT CHƯA ĐƯỢC CẬP NHẬT - YÊU CẦU KHỞI ĐỘNG LẠI`, process.env.LOGS_SERVER_SEXY)
                 if (session.nameService) {
-                    session.stampTime = timeUnixCurrent - ((60 * 1000) * 8);
+                    const staleServiceName = session.nameService;
+                    let cmdReloadPm2;
+
+                    sessionList.session[key] = {
+                        ...session,
+                        nameService: undefined,
+                        sessionId: undefined,
+                        stampTime: -1,
+                    };
                     // io.emit(`${session.nameService}_restart`, {});
                     // console.log(`ĐÃ GỬI YÊU CẦU KHỞI ĐỘNG LẠI => ${session.nameService}`);
                     // let cmdReloadPm2 = `pm2 reload ${session.namePm2}`
-                    switch (session.nameService) {
+                    switch (staleServiceName) {
                         case 'NS1':
                             cmdReloadPm2 = 'pm2 reload session_sexy_1'
                             break;
@@ -85,6 +93,10 @@ setInterval(async () => {
                         case 'NS3':
                             cmdReloadPm2 = 'pm2 reload session_sexy_3'
                             break;
+                    }
+                    if (!cmdReloadPm2) {
+                        await appendToLog(`Không tìm thấy PM2 process cho service => ${staleServiceName}`, process.env.LOGS_SERVER_SEXY)
+                        continue;
                     }
                     exec(cmdReloadPm2, async (error, stdout, stderr) => {
                         if (error) {
@@ -96,7 +108,7 @@ setInterval(async () => {
                             return;
                         }
                         await appendToLog(`stdout: ${stdout}`, process.env.LOGS_SERVER_SEXY)
-                        await appendToLog(`(PM2)KHỞI ĐỘNG LẠI SERVICE => ${session.nameService}: ${error.message}`, process.env.LOGS_SERVER_SEXY)
+                        await appendToLog(`(PM2)KHỞI ĐỘNG LẠI SERVICE => ${staleServiceName}`, process.env.LOGS_SERVER_SEXY)
                     });
                 }
             }
