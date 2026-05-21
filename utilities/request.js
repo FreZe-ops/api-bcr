@@ -49,7 +49,8 @@ async function CollectingResponseSession(response, isCollecting) {
     try {
         const urlMatchDomains = ['bfscg.awamat.com', 'gklam.com', 'vcnh2k.gklam.com'];
         const urlMatches = urlMatchDomains.some(d => url.includes(d));
-        if ((resourceType === 'xhr' || resourceType === 'fetch') && urlMatches) {
+        const allowedTypes = ['xhr', 'fetch', 'document', 'script', 'other', 'websocket'];
+        if (urlMatches && allowedTypes.includes(resourceType)) {
             let sessionId = undefined;
             const urlMatch = url.match(/jsessionid[=;/]([^?&;\s]+)/i);
             if (urlMatch) sessionId = urlMatch[1];

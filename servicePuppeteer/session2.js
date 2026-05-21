@@ -17,6 +17,7 @@ let page;
 let seamlessFrame;
 let gameHallFrame;
 let gameCurrentFrame;
+let lastNetworkHallSessionId;
 let timeSendSessionDelay = Number(account.timeSendSessionDelay);
 let timeSendSessionNearest = helper.getCurrentTime().timeUnix;
 const username_game = "besuong2003";
@@ -55,11 +56,13 @@ async function main() {
             isCollecting = true;
             const handleResponse = async (response) => {
                 const resSession = await request.CollectingResponseSession(response, isCollecting);
+                if (typeof resSession !== 'string' || !/^[a-zA-Z0-9]+$/.test(resSession)) return;
+                lastNetworkHallSessionId = resSession;
                 const timeUnixCurrent = helper.getCurrentTime().timeUnix;
-                if (typeof resSession === 'string' && /^[a-zA-Z0-9]+$/.test(resSession) && timeUnixCurrent > (timeSendSessionNearest + timeSendSessionDelay)) {
-                    timeSendSessionNearest = timeUnixCurrent;
-                    sendSessionData(resSession, nameServiceSocket);
-                }
+                if (timeUnixCurrent <= (timeSendSessionNearest + timeSendSessionDelay)) return;
+                timeSendSessionNearest = timeUnixCurrent;
+                await helper.appendToLog(`(NETWORK/gklam) hall sessionId:: ${resSession}`, logsNameProgress);
+                sendSessionData(resSession, nameServiceSocket);
             };
             page.on('response', handleResponse);
             frames.forEach(frame => { if (frame && frame.on) frame.on('response', handleResponse); });
@@ -212,15 +215,16 @@ async function getGklamSessionFromCookies() {
 }
 
 async function pushGklamHallSession(label = 'hall') {
-    const sessionId = await getGklamSessionFromCookies();
+    let sessionId = lastNetworkHallSessionId;
+    if (!sessionId) sessionId = await getGklamSessionFromCookies();
     if (!sessionId) {
-        await helper.appendToLog(`(COOKIE/gklam) chưa có session [${label}]`, logsNameProgress);
+        await helper.appendToLog(`(SESSION) chưa có hall session [${label}]`, logsNameProgress);
         return false;
     }
     const timeUnixCurrent = helper.getCurrentTime().timeUnix;
     if (timeUnixCurrent <= (timeSendSessionNearest + timeSendSessionDelay)) return true;
     timeSendSessionNearest = timeUnixCurrent;
-    await helper.appendToLog(`(COOKIE/gklam) hall sessionId:: ${sessionId} [${label}]`, logsNameProgress);
+    await helper.appendToLog(`(SESSION) push hall sessionId:: ${sessionId} [${label}]`, logsNameProgress);
     sendSessionData(sessionId, nameServiceSocket);
     return true;
 }
@@ -230,7 +234,7 @@ async function pushGklamHallSessionRetry(label, attempts = 12, intervalMs = 5000
         if (await pushGklamHallSession(`${label} ${i}/${attempts}`)) return true;
         if (i < attempts) await helper.delay(intervalMs);
     }
-    await helper.appendToLog(`(COOKIE/gklam) FAIL sau ${attempts} lần [${label}]`, logsNameProgress);
+    await helper.appendToLog(`(SESSION) FAIL sau ${attempts} lần [${label}]`, logsNameProgress);
     return false;
 }
 
@@ -249,6 +253,7 @@ async function resetMain() {
     } finally {
         if (context) await context.close().catch(() => {});
         isCollecting = false;
+        lastNetworkHallSessionId = undefined;
         await helper.delay(5000);
         timeSendSessionNearest = helper.getCurrentTime().timeUnix;
         await helper.appendToLog('Khởi động lại chương trình...', logsNameProgress);
