@@ -36,6 +36,7 @@ const io = socketIO(server, {
 });
 
 let sessionList = SESSION_LIST
+let crawlLogTick = 0
 
 io.on('connection', (socket) => {
     console.info(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S0] socket connected: ${socket.id}`);
@@ -131,18 +132,22 @@ setInterval(async () => {
         .map(key => sessionList.session[key]);
 
     if (availableSessions.length === 0) {
-        const pool = sessionKeys.map((key) => {
-            const item = sessionList.session[key];
-            return {
-                key,
-                nameService: item.nameService,
-                sessionId: item.sessionId ? `${item.sessionId.slice(0, 8)}...` : null,
-                stampTime: item.stampTime,
-                reason: explainInvalidSession(item),
-            };
-        });
-        console.log(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S0] no valid session | pool=${JSON.stringify(pool)}`);
+        crawlLogTick++;
+        if (crawlLogTick % 20 === 1) {
+            const pool = sessionKeys.map((key) => {
+                const item = sessionList.session[key];
+                return {
+                    key,
+                    nameService: item.nameService,
+                    sessionId: item.sessionId ? `${item.sessionId.slice(0, 8)}...` : null,
+                    stampTime: item.stampTime,
+                    reason: explainInvalidSession(item),
+                };
+            });
+            console.log(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S0] no valid session | pool=${JSON.stringify(pool)}`);
+        }
     } else {
+        crawlLogTick = 0;
         console.log(`${getCurrentTime().timeFormatted} [CRAWL][STEP_S0] valid sessions=${availableSessions.length}`, availableSessions.map(s => ({
             nameService: s.nameService,
             sessionId: s.sessionId?.slice(0, 8),

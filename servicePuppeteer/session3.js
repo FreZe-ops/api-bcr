@@ -34,18 +34,13 @@ async function main() {
         logStep('STEP_01', 'launch browser start', { userDataDir: account.userDataDir });
         browser = await puppeteer.launch({
             headless: 'new',
-            // headless: false,
-            slowMo: 50,
+            protocolTimeout: 180000,
             userDataDir: `./servicePuppeteer/dataDir/${account.userDataDir}`,
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--start-maximized']
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
         });
         page = await browser.newPage();
-        const { width, height } = await page.evaluate(() => {
-            return {
-                width: window.screen.availWidth,
-                height: window.screen.availHeight
-            };
-        });
+        const width = 1920;
+        const height = 1080;
         await page.setViewport({ width, height });
         await page.setUserAgent(process.env.USER_AGENT);
         logStep('STEP_01', 'browser ready', { viewport: { width, height }, domain: process.env.DOMAIN });
@@ -97,7 +92,7 @@ async function main() {
 
         // login
         logStep('STEP_03', 'login flow start');
-        await clickButton(logsNameProgress, page, process.env.CLOSE_DIALOG_WELCOME, 'ĐÓNG THÔNG BÁO SỰ KIỆN');
+        await clickButtonOptional(logsNameProgress, page, process.env.CLOSE_DIALOG_WELCOME, 'ĐÓNG THÔNG BÁO SỰ KIỆN');
         await clickButton(logsNameProgress, page, process.env.SHOW_DIALOG_LOGIN, 'HIỂN THỊ DIALOG ĐĂNG NHẬP');
         logStep('STEP_05', 'captcha start');
         const codeCapcha = await imageCapcha.getCodeCapchaLogin(logsNameProgress, page)
@@ -108,7 +103,7 @@ async function main() {
         await clickButton(logsNameProgress, page, 'button[type="submit"].submit_btn', 'ĐĂNG NHẬP');
         logStep('STEP_06', 'login submitted');
         await helper.delay(5000);
-        await clickButton(logsNameProgress, page, process.env.SHOW_DIALOG_LOGIN_SUCCESS, 'ĐÓNG THÔNG BÁO CẢNH BÁO KHI HOÀN TẤT ĐĂNG NHẬP');
+        await clickButtonOptional(logsNameProgress, page, process.env.SHOW_DIALOG_LOGIN_SUCCESS, 'ĐÓNG THÔNG BÁO CẢNH BÁO KHI HOÀN TẤT ĐĂNG NHẬP');
         logStep('STEP_07', 'login flow done');
 
         // redirect to baccarat sexy
@@ -289,6 +284,23 @@ async function fillInput(logsNameProgress, page, classElement, value) {
 
     await helper.appendToLog(`Quá 9 lần nhập thất bại - khởi động lại`, logsNameProgress);
     await resetMain();
+}
+
+async function clickButtonOptional(logsNameProgress, page, classElement, msg = '_', maxRetries = 2) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        await helper.delay(500);
+        const clickBtn = await page.$(classElement);
+        if (clickBtn) {
+            await clickBtn.evaluate(b => b.click());
+            logStep('STEP_UI', 'optional click OK', { msg, selector: classElement, attempt });
+            await helper.appendToLog(`CLICK => ${msg} THÀNH CÔNG`, logsNameProgress);
+            return true;
+        }
+        logStep('STEP_UI', 'optional click not found', { msg, selector: classElement, attempt });
+    }
+    logStep('STEP_UI', 'optional click skipped', { msg, selector: classElement });
+    await helper.appendToLog(`CLICK => ${msg} KHÔNG CÓ - BỎ QUA`, logsNameProgress);
+    return false;
 }
 
 async function clickButton(logsNameProgress, page, classElement, msg = "_", numberClick = 1) {
