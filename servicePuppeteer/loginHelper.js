@@ -3,29 +3,29 @@ const path = require('path');
 const { delay } = require('../utilities/helper');
 
 const LOGIN_OPEN_SELECTORS = [
-    () => process.env.SHOW_DIALOG_LOGIN,
-    () => '.header_btn_login',
-    () => '.login_btn',
-    () => '.btn_login',
-    () => 'button.login',
-    () => '.nav_item_btn.login',
-    () => '.submit_btn',
-].map((fn) => fn()).filter(Boolean);
+    process.env.SHOW_DIALOG_LOGIN,
+    '.header_btn_login',
+    '.login_btn',
+    '.btn_login',
+    'button.login',
+    '.submit_btn',
+].filter(Boolean);
 
 const LOGIN_READY_SELECTORS = [
-    () => process.env.INPUT_USERNAME_LOGIN,
-    () => process.env.BASE64_CAPCHA,
-    () => 'div.captcha_box img',
-    () => '.username_input',
-    () => '.captcha_input',
-].map((fn) => fn()).filter(Boolean);
+    process.env.BASE64_CAPCHA,
+    process.env.INPUT_USERNAME_LOGIN,
+    'div.captcha_box img',
+    '.username_input',
+    '.captcha_input',
+].filter(Boolean);
 
 async function saveDebugScreenshot(page, label) {
     try {
+        if (!page || page.isClosed()) return null;
         const dir = path.join(__dirname, 'debug');
         await fs.mkdir(dir, { recursive: true });
         const file = path.join(dir, `${label}-${Date.now()}.png`);
-        await page.screenshot({ path: file, fullPage: true });
+        await page.screenshot({ path: file, fullPage: false });
         console.log(`[DEBUG] screenshot saved: ${file}`);
         return file;
     } catch (error) {
@@ -35,48 +35,70 @@ async function saveDebugScreenshot(page, label) {
 }
 
 async function getLoginPageState(page) {
-    return page.evaluate((selectors) => {
-        const pick = (selector) => {
-            try {
-                const node = document.querySelector(selector);
-                if (!node) return false;
-                const rect = node.getBoundingClientRect();
-                return rect.width > 0 && rect.height > 0;
-            } catch (_) {
-                return false;
-            }
-        };
-
-        return {
+    try {
+        return await page.evaluate(() => ({
             url: location.href,
-            title: document.title,
+            captcha: !!document.querySelector('div.captcha_box img'),
+            username: !!document.querySelector('.username_input'),
             submitBtnCount: document.querySelectorAll('.submit_btn').length,
-            captchaVisible: pick('div.captcha_box img'),
-            usernameVisible: pick('.username_input'),
-            passwordVisible: pick('.password_input'),
-            captchaInputVisible: pick('.captcha_input'),
-            modalCount: document.querySelectorAll('.publicModal, .tcg_modal, [class*="modal"]').length,
-            selectors: selectors.map((selector) => ({ selector, visible: pick(selector) })),
-        };
-    }, LOGIN_READY_SELECTORS);
+        }));
+    } catch (error) {
+        return { error: error.message };
+    }
+}
+
+async function waitAnySelector(page, selectors, timeout = 8000) {
+    const tasks = selectors.map((selector) =>
+        page.waitForSelector(selector, { timeout, visible: true }).then(() => selector)
+    );
+
+    try {
+        return await Promise.any(tasks);
+    } catch (_) {
+        return null;
+    }
 }
 
 async function openLoginDialog(page, logStep) {
-    logStep('STEP_04', 'open login dialog start', { selectors: LOGIN_OPEN_SELECTORS });
+    logStep('STEP_04', 'open login dialog start', {
+        domain: process.env.DOMAIN,
+        openSelectors: LOGIN_OPEN_SELECTORS,
+        readySelectors: LOGIN_READY_SELECTORS,
+    });
+
+    const alreadyOpen = await waitAnySelector(page, LOGIN_READY_SELECTORS, 3000);
+    if (alreadyOpen) {
+        logStep('STEP_04', 'login dialog already open', { selector: alreadyOpen });
+        return true;
+    }
 
     for (const selector of LOGIN_OPEN_SELECTORS) {
+        if (page.isClosed()) {
+            throw new Error('Page closed before opening login dialog');
+        }
+
         const button = await page.$(selector);
         if (!button) {
             logStep('STEP_04', 'login trigger not found', { selector });
             continue;
         }
 
-        await button.evaluate((node) => node.click());
-        logStep('STEP_04', 'login trigger clicked', { selector });
-        await delay(2000);
+        try {
+            await button.click();
+        } catch (_) {
+            await button.evaluate((node) => node.click());
+        }
 
-        const ready = await waitForLoginDialog(page, logStep, 12000);
-        if (ready) return true;
+        logStep('STEP_04', 'login trigger clicked', { selector });
+        await delay(1500);
+
+        const readySelector = await waitAnySelector(page, LOGIN_READY_SELECTORS, 8000);
+        if (readySelector) {
+            logStep('STEP_04', 'login dialog ready', { selector: readySelector });
+            return true;
+        }
+
+        logStep('STEP_04', 'login dialog still closed after click', { selector });
     }
 
     const state = await getLoginPageState(page);
@@ -85,25 +107,8 @@ async function openLoginDialog(page, logStep) {
     return false;
 }
 
-async function waitForLoginDialog(page, logStep, timeout = 15000) {
-    for (const selector of LOGIN_READY_SELECTORS) {
-        try {
-            await page.waitForSelector(selector, { timeout, visible: true });
-            logStep('STEP_04', 'login dialog ready', { selector });
-            return true;
-        } catch (_) {
-            logStep('STEP_04', 'wait login selector timeout', { selector, timeout });
-        }
-    }
-
-    const state = await getLoginPageState(page);
-    logStep('STEP_04', 'login dialog not ready after wait', state);
-    return false;
-}
-
 module.exports = {
     openLoginDialog,
-    waitForLoginDialog,
     getLoginPageState,
     saveDebugScreenshot,
 };

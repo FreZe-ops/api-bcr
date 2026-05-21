@@ -35,9 +35,15 @@ async function main() {
         logStep('STEP_01', 'launch browser start', { userDataDir: account.userDataDir });
         browser = await puppeteer.launch({
             headless: 'new',
-            protocolTimeout: 180000,
+            protocolTimeout: 300000,
             userDataDir: `./servicePuppeteer/dataDir/${account.userDataDir}`,
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--disable-features=IsolateOrigins,site-per-process',
+            ]
         });
         page = await browser.newPage();
         const width = 1920;
@@ -295,10 +301,18 @@ async function fillInput(logsNameProgress, page, classElement, value) {
 
 async function clickButtonOptional(logsNameProgress, page, classElement, msg = '_', maxRetries = 2) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        if (!page || page.isClosed()) {
+            throw new Error(`Page closed during optional click: ${msg}`);
+        }
+
         await helper.delay(500);
         const clickBtn = await page.$(classElement);
         if (clickBtn) {
-            await clickBtn.evaluate(b => b.click());
+            try {
+                await clickBtn.click();
+            } catch (_) {
+                await clickBtn.evaluate((node) => node.click());
+            }
             logStep('STEP_UI', 'optional click OK', { msg, selector: classElement, attempt });
             await helper.appendToLog(`CLICK => ${msg} THÀNH CÔNG`, logsNameProgress);
             return true;
