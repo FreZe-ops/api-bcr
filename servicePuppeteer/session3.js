@@ -130,6 +130,7 @@ async function main() {
             if (f) gameHallFrame = f;
         }
 
+        await waitForGklamOrTriggerHallLoad(gameHallFrame);
         await logFrameSessionDebug('hall-ready');
         await pushGklamHallSessionRetry('hall-ready', 6, 5000);
         await startBaccaratCycle();
@@ -140,12 +141,12 @@ async function main() {
                 const gameHallEl = await seamlessFrame.$('iframe#iframeGameHall');
                 if (gameHallEl) {
                     const f = await gameHallEl.contentFrame();
-                    if (f) gameHallFrame = f;
+                    if (f) { gameHallFrame = f; attachFrameCollector(f); }
                 }
                 const gameEl = await seamlessFrame.$('iframe#iframeGame');
                 if (gameEl) {
                     const f = await gameEl.contentFrame();
-                    if (f) gameCurrentFrame = f;
+                    if (f) { gameCurrentFrame = f; attachFrameCollector(f); }
                 }
             } catch (e) {}
             return { gh: gameHallFrame, gc: gameCurrentFrame };
@@ -197,14 +198,20 @@ function attachSessionCollector() {
     page.on('response', onHallNetworkResponse);
 }
 
+function attachFrameCollector(frame) {
+    if (!frame || frame.__sessionCollectorAttached) return;
+    frame.__sessionCollectorAttached = true;
+    frame.on('response', onHallNetworkResponse);
+}
+
 async function onHallNetworkResponse(response) {
     if (!isCollecting) return;
     try {
         const url = response.url();
-        if (/gklam\.com|awamat\.com/i.test(url)) {
+        if (/gklam\.com|awamat\.com|queryInitWebGameHall|bpcdf\./i.test(url)) {
             gklamNetworkHitCount++;
-            if (gklamNetworkHitCount <= 8) {
-                await helper.appendToLog(`(NETWORK) gklam #${gklamNetworkHitCount}: ${url.slice(0, 140)}`, logsNameProgress);
+            if (gklamNetworkHitCount <= 12) {
+                await helper.appendToLog(`(NETWORK) #${gklamNetworkHitCount}: ${url.slice(0, 160)}`, logsNameProgress);
             }
         }
     } catch (error) {}
@@ -232,16 +239,76 @@ async function extractSessionFromFrame(frame) {
     }
 }
 
+async function probeAllJSessionCookies() {
+    if (!context) return undefined;
+    try {
+        const allCookies = await context.cookies();
+        const candidates = [...new Set(
+            allCookies.filter(c => /JSESSIONID/i.test(c.name) && c.value).map(c => c.value)
+        )];
+        if (!candidates.length) return undefined;
+        await helper.appendToLog(`(COOKIE) thử ${candidates.length} JSESSIONID`, logsNameProgress);
+        for (const sessionId of candidates) {
+            const data = await request.requestData(sessionId);
+            const tableCount = Array.isArray(data?.tableItems) ? data.tableItems.length : 0;
+            if (tableCount > 0) {
+                await helper.appendToLog(`(COOKIE) valid ${sessionId.slice(0, 8)} tableItems=${tableCount}`, logsNameProgress);
+                return sessionId;
+            }
+        }
+    } catch (error) {
+        await helper.appendToLog(`(COOKIE) lỗi probe: ${error.message}`, logsNameProgress);
+    }
+    return undefined;
+}
+
+async function waitForGklamOrTriggerHallLoad(gh) {
+    attachFrameCollector(seamlessFrame);
+    attachFrameCollector(gh);
+    attachFrameCollector(gameCurrentFrame);
+
+    await helper.appendToLog('Trigger load sảnh — click bàn sớm + chờ network', logsNameProgress);
+    await clickButtonOptional(logsNameProgress, gh, process.env.CLICK_IN_TABLE_GAME, 'VÀO BÀN BACCARAT (early)', 2, 8);
+    await helper.delay(8000);
+
+    try {
+        await context.waitForEvent('response', {
+            predicate: (r) => /gklam\.com|queryInitWebGameHall/i.test(r.url()),
+            timeout: 45000,
+        });
+        await helper.appendToLog('Đã thấy gklam response sau trigger', logsNameProgress);
+    } catch (e) {
+        await helper.appendToLog('Timeout chờ gklam response — thử probe cookie', logsNameProgress);
+    }
+
+    const fromCookie = await probeAllJSessionCookies();
+    if (fromCookie) lastNetworkHallSessionId = fromCookie;
+}
+
 async function resolveHallSessionId() {
-    if (lastNetworkHallSessionId) return lastNetworkHallSessionId;
+    if (lastNetworkHallSessionId) {
+        const data = await request.requestData(lastNetworkHallSessionId);
+        const tableCount = Array.isArray(data?.tableItems) ? data.tableItems.length : 0;
+        if (tableCount > 0) return lastNetworkHallSessionId;
+        lastNetworkHallSessionId = undefined;
+    }
     for (const frame of [gameCurrentFrame, gameHallFrame, seamlessFrame]) {
         const sessionId = await extractSessionFromFrame(frame);
         if (sessionId) {
-            lastNetworkHallSessionId = sessionId;
-            return sessionId;
+            const data = await request.requestData(sessionId);
+            const tableCount = Array.isArray(data?.tableItems) ? data.tableItems.length : 0;
+            if (tableCount > 0) {
+                lastNetworkHallSessionId = sessionId;
+                return sessionId;
+            }
         }
     }
-    return await getGklamSessionFromCookies();
+    const fromGklamCookie = await getGklamSessionFromCookies();
+    if (fromGklamCookie) {
+        const data = await request.requestData(fromGklamCookie);
+        if (Array.isArray(data?.tableItems) && data.tableItems.length > 0) return fromGklamCookie;
+    }
+    return await probeAllJSessionCookies();
 }
 
 async function logFrameSessionDebug(label) {

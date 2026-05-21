@@ -49,16 +49,15 @@ async function CollectingResponseSession(response, isCollecting) {
     if (!isCollecting) return;
 
     const url = response.url();
-    const status = response.status();
     const request = response.request();
     const resourceType = request.resourceType();
     try {
-        const urlMatchDomains = ['bfscg.awamat.com', 'gklam.com', 'vcnh2k.gklam.com'];
-        const urlMatches = urlMatchDomains.some(d => url.includes(d));
+        const urlMatchDomains = ['bfscg.awamat.com', 'gklam.com', 'vcnh2k.gklam.com', 'bpcdf.', 'awamat.com'];
+        const isHallQuery = /queryInitWebGameHall/i.test(url);
+        const urlMatches = isHallQuery || urlMatchDomains.some(d => url.includes(d));
         const allowedTypes = ['xhr', 'fetch', 'document', 'script', 'other', 'websocket'];
         if (urlMatches && allowedTypes.includes(resourceType)) {
             let sessionId = extractSessionIdFromUrl(url);
-            const isHallQuery = /queryInitWebGameHall/i.test(url);
             if (!sessionId) {
                 const headers = request.headers();
                 const cookieHeader = headers['cookie'] || headers['Cookie'] || '';
