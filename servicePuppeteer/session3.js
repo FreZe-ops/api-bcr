@@ -123,35 +123,29 @@ async function main() {
         }
 
         startCollectingResponses(page, [seamlessFrame, gameHallFrame, gameCurrentFrame]);
+        await pushGklamHallSessionRetry('hall-ready', 6, 5000);
         await startBaccaratCycle(gameHallFrame, gameCurrentFrame);
 
         async function playBaccaratLoop(gh, gc) {
-            try {
-                await clickButton(logsNameProgress, gh, process.env.CLICK_IN_TABLE_GAME, 'VÀO BÀN BACCARAT', 2);
-                await gh.hover(process.env.CLICK_IN_TABLE_GAME);
-                await helper.delay(30000);
-                await sendGklamHallSessionOnce();
-                await clickButtonOptional(logsNameProgress, gc, 'button#goHome2', 'TRỞ VỀ SẢNH GAME', 2);
-                await helper.delay(2000);
-            } catch (error) {
-                await helper.appendToLog(`Lỗi trong chu kỳ baccarat: ${error.message}`, logsNameProgress);
-                return resetMain();
+            const enteredTable = await clickButtonOptional(
+                logsNameProgress, gh, process.env.CLICK_IN_TABLE_GAME, 'VÀO BÀN BACCARAT', 2, 10
+            );
+            if (enteredTable) {
+                await gh.hover(process.env.CLICK_IN_TABLE_GAME).catch(() => {});
+                await helper.delay(15000);
             }
+            await pushGklamHallSessionRetry(enteredTable ? 'on-table' : 'in-hall', 12, 5000);
+            await clickButtonOptional(logsNameProgress, gc, 'button#goHome2', 'TRỞ VỀ SẢNH GAME', 2);
+            await helper.delay(2000);
         }
 
         async function startBaccaratCycle(gh, gc) {
             const interval = 2 * (60 * 1000);
             while (true) {
-                try {
-                    await helper.appendToLog('Bắt đầu chu kỳ baccarat', logsNameProgress);
-                    await playBaccaratLoop(gh, gc);
-                    await helper.appendToLog('Chờ đến chu kỳ tiếp theo...', logsNameProgress);
-                    await helper.delay(interval);
-                } catch (error) {
-                    await helper.appendToLog(`Lỗi trong startBaccaratCycle: ${error.message}`, logsNameProgress);
-                    await resetMain();
-                    break;
-                }
+                await helper.appendToLog('Bắt đầu chu kỳ baccarat', logsNameProgress);
+                await playBaccaratLoop(gh, gc);
+                await helper.appendToLog('Chờ đến chu kỳ tiếp theo...', logsNameProgress);
+                await helper.delay(interval);
             }
         }
 
@@ -173,27 +167,52 @@ async function sendSessionData(sessionId, nameService) {
 async function getGklamSessionFromCookies() {
     if (!context) return undefined;
     try {
-        const cookies = await context.cookies();
-        const gameCookies = cookies.filter(cookie =>
-            /JSESSIONID/i.test(cookie.name) &&
-            /gklam\.com/i.test(cookie.domain || '')
-        );
-        if (!gameCookies.length) return undefined;
-        return gameCookies[gameCookies.length - 1].value;
+        const probeUrls = [
+            'https://vcnh2k.gklam.com',
+            'https://gklam.com',
+        ];
+        const seen = new Map();
+        for (const url of probeUrls) {
+            const cookies = await context.cookies(url);
+            for (const cookie of cookies) {
+                if (/JSESSIONID/i.test(cookie.name)) seen.set(cookie.value, cookie);
+            }
+        }
+        const allCookies = await context.cookies();
+        for (const cookie of allCookies) {
+            if (/JSESSIONID/i.test(cookie.name) && /gklam\.com/i.test(cookie.domain || '')) {
+                seen.set(cookie.value, cookie);
+            }
+        }
+        if (!seen.size) return undefined;
+        return [...seen.keys()].pop();
     } catch (error) {
         await helper.appendToLog(`Không đọc được cookie gklam: ${error.message}`, logsNameProgress);
         return undefined;
     }
 }
 
-async function sendGklamHallSessionOnce() {
+async function pushGklamHallSession(label = 'hall') {
     const sessionId = await getGklamSessionFromCookies();
-    if (!sessionId) return;
+    if (!sessionId) {
+        await helper.appendToLog(`(COOKIE/gklam) chưa có session [${label}]`, logsNameProgress);
+        return false;
+    }
     const timeUnixCurrent = helper.getCurrentTime().timeUnix;
-    if (timeUnixCurrent <= (timeSendSessionNearest + timeSendSessionDelay)) return;
+    if (timeUnixCurrent <= (timeSendSessionNearest + timeSendSessionDelay)) return true;
     timeSendSessionNearest = timeUnixCurrent;
-    await helper.appendToLog(`(COOKIE/gklam) hall sessionId:: ${sessionId}`, logsNameProgress);
+    await helper.appendToLog(`(COOKIE/gklam) hall sessionId:: ${sessionId} [${label}]`, logsNameProgress);
     sendSessionData(sessionId, nameServiceSocket);
+    return true;
+}
+
+async function pushGklamHallSessionRetry(label, attempts = 12, intervalMs = 5000) {
+    for (let i = 1; i <= attempts; i++) {
+        if (await pushGklamHallSession(`${label} ${i}/${attempts}`)) return true;
+        if (i < attempts) await helper.delay(intervalMs);
+    }
+    await helper.appendToLog(`(COOKIE/gklam) FAIL sau ${attempts} lần [${label}]`, logsNameProgress);
+    return false;
 }
 
 socket.on(`${nameServiceSocket}_restart`, async () => {
@@ -261,9 +280,9 @@ async function clickButton(logsNameProgress, target, classElement, msg = '_', nu
     await resetMain();
 }
 
-async function clickButtonOptional(logsNameProgress, target, classElement, msg = '_', numberClick = 1) {
+async function clickButtonOptional(logsNameProgress, target, classElement, msg = '_', numberClick = 1, maxRetry = 3) {
     const action = numberClick > 1 ? 'DOUBLE CLICK' : 'CLICK';
-    for (let retryCount = 1; retryCount <= 3; retryCount++) {
+    for (let retryCount = 1; retryCount <= maxRetry; retryCount++) {
         await helper.delay(500);
         try {
             const el = await target.$(classElement);
@@ -276,6 +295,7 @@ async function clickButtonOptional(logsNameProgress, target, classElement, msg =
         await helper.appendToLog(`${action} => ${msg} KHÔNG TÌM THẤY (lần ${retryCount}) - BỎ QUA`, logsNameProgress);
         await helper.delay(1000);
     }
+    await helper.appendToLog(`${action} => ${msg} KHÔNG TÌM THẤY sau ${maxRetry} lần - BỎ QUA`, logsNameProgress);
     return false;
 }
 
