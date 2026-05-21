@@ -1,6 +1,7 @@
 # /logs/*
 /servicePuppeteer/dataDir/*
 /node_modules
+.env
 # /utilities/image_temp/*
 eng.traineddata
 package-lock.json
