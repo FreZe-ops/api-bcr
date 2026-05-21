@@ -3,6 +3,12 @@ require('dotenv').config();
 
 const { getCurrentTime } = require('./helper');
 
+function extractSessionIdFromUrl(url) {
+    if (!url || typeof url !== 'string') return undefined;
+    const match = url.match(/jsessionid[=;/]([^?&;\s]+)/i);
+    return match ? match[1] : undefined;
+}
+
 async function requestData(sessionId) {
     const url = process.env.URI_REQUEST_DATA + sessionId;
 
@@ -51,9 +57,7 @@ async function CollectingResponseSession(response, isCollecting) {
         const urlMatches = urlMatchDomains.some(d => url.includes(d));
         const allowedTypes = ['xhr', 'fetch', 'document', 'script', 'other', 'websocket'];
         if (urlMatches && allowedTypes.includes(resourceType)) {
-            let sessionId = undefined;
-            const urlMatch = url.match(/jsessionid[=;/]([^?&;\s]+)/i);
-            if (urlMatch) sessionId = urlMatch[1];
+            let sessionId = extractSessionIdFromUrl(url);
             const isHallQuery = /queryInitWebGameHall/i.test(url);
             if (!sessionId) {
                 const headers = request.headers();
@@ -166,6 +170,7 @@ module.exports = {
     callQueryInitWebGameHall,
     CollectingResponseSession,
     CollectingResponseSessionV2,
+    extractSessionIdFromUrl,
     sendTelegramMessage,
     requestData,
 };
