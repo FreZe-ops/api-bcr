@@ -44,7 +44,7 @@ async function delay(time) {
 
 function isValidSession(session) {
     const currentTime = getCurrentTime().timeUnix;
-    const maxTimeDiff = 10 * 1000;
+    const maxTimeDiff = 60 * 1000;
 
     return (
         typeof session.nameService === 'string' &&

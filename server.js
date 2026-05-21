@@ -37,6 +37,7 @@ const io = socketIO(server, {
 let sessionList = SESSION_LIST
 
 io.on('connection', (socket) => {
+    console.info(`${getCurrentTime().timeFormatted} - socket connected: ${socket.id}`);
     socket.on('session', async (payload) => {
         const { sessionId, nameService, stampTime } = payload
 
@@ -47,6 +48,8 @@ io.on('connection', (socket) => {
                 stampTime: stampTime // || Date.now()
             };
             console.info(`${getCurrentTime().timeFormatted} - ${nameService || '_'} = ${sessionId || '_'}`);
+        } else {
+            console.warn(`${getCurrentTime().timeFormatted} - ignored unknown session service: ${nameService || '_'}`);
         }
 
         if (nameService == "NS5") {
@@ -126,7 +129,14 @@ setInterval(async () => {
         const selectedSession = availableSessions[randomIndex];
         console.log(`SỬ DỤNG SESSION => ${selectedSession.sessionId}`)
         const data = await requestData(selectedSession.sessionId);
-        if (!data.tableItems) return
+        if (!data.tableItems) {
+            console.warn('[CRAWL] requestData returned no tableItems', {
+                keys: data && typeof data === 'object' ? Object.keys(data) : [],
+                sessionName: selectedSession.nameService,
+            });
+            return
+        }
+        console.log(`[CRAWL] received tableItems=${data.tableItems.length} from ${selectedSession.nameService}`)
         const dataTableList = filterData(data.tableItems)
 
         await initDatabase(dataTableList)

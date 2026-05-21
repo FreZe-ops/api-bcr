@@ -17,6 +17,7 @@ let page;
 let seamlessFrame;
 let gameHallFrame;
 let gameCurrentFrame;
+let sessionCookiePoller;
 let timeSendSessionDelay = Number(account.timeSendSessionDelay);
 let timeSendSessionNearest = helper.getCurrentTime().timeUnix;
 const username_game = account.username_game;
@@ -24,10 +25,12 @@ const password_game = account.password_game;
 const nameServiceSocket = account.nameServiceSocket;
 const logsNameProgress = account.logsNameProgress;
 
-main();
-socket = io(`${process.env.SERVER_HOSTNAME}:${process.env.SERVER_PORT}`);
-socket.on('connect', () => console.log('(SOCKET) Connecting'));
+const socketUrl = `${process.env.SERVER_HOSTNAME}:${process.env.SERVER_PORT}`;
+socket = io(socketUrl, { transports: ['websocket', 'polling'] });
+socket.on('connect', () => console.log(`(SOCKET) Connecting ${socketUrl}`));
 socket.on('disconnect', () => console.log('(SOCKET) Disconnected'));
+socket.on('connect_error', (e) => console.log('(SOCKET) connect_error:', e.message));
+main();
 
 async function main() {
     try {
@@ -56,13 +59,14 @@ async function main() {
             const handleResponse = async (response) => {
                 const resSession = await request.CollectingResponseSession(response, isCollecting);
                 const timeUnixCurrent = helper.getCurrentTime().timeUnix;
-                if (typeof resSession === 'string' && /^[a-zA-Z0-9]+$/.test(resSession) && timeUnixCurrent > (timeSendSessionNearest + timeSendSessionDelay)) {
+                if (typeof resSession === 'string' && /^[^;\s]+$/.test(resSession) && timeUnixCurrent > (timeSendSessionNearest + timeSendSessionDelay)) {
                     timeSendSessionNearest = timeUnixCurrent;
                     sendSessionData(resSession, nameServiceSocket);
                 }
             };
             page.on('response', handleResponse);
             frames.forEach(frame => { if (frame && frame.on) frame.on('response', handleResponse); });
+            startSessionCookiePolling();
         }
 
         await page.goto(DOMAIN, { waitUntil: 'load', timeout: 60000 });
@@ -130,7 +134,7 @@ async function main() {
                 await clickButton(logsNameProgress, gh, process.env.CLICK_IN_TABLE_GAME, 'VÀO BÀN BACCARAT', 2);
                 await gh.hover(process.env.CLICK_IN_TABLE_GAME);
                 await helper.delay(30000);
-                await clickButton(logsNameProgress, gc, 'button#goHome2', 'TRỞ VỀ SẢNH GAME', 2);
+                await clickButtonOptional(logsNameProgress, gc, 'button#goHome2', 'TRỞ VỀ SẢNH GAME', 2);
                 await helper.delay(2000);
             } catch (error) {
                 await helper.appendToLog(`Lỗi trong chu kỳ baccarat: ${error.message}`, logsNameProgress);
@@ -169,6 +173,32 @@ async function sendSessionData(sessionId, nameService) {
     }
 }
 
+async function getSessionFromCookies() {
+    if (!context) return undefined;
+    try {
+        const cookies = await context.cookies();
+        const sessionCookie = cookies.find(cookie => /JSESSIONID/i.test(cookie.name));
+        return sessionCookie?.value;
+    } catch (error) {
+        await helper.appendToLog(`Không đọc được cookie session: ${error.message}`, logsNameProgress);
+        return undefined;
+    }
+}
+
+function startSessionCookiePolling() {
+    if (sessionCookiePoller) clearInterval(sessionCookiePoller);
+    sessionCookiePoller = setInterval(async () => {
+        if (!isCollecting) return;
+        const sessionId = await getSessionFromCookies();
+        const timeUnixCurrent = helper.getCurrentTime().timeUnix;
+        if (sessionId && timeUnixCurrent > (timeSendSessionNearest + timeSendSessionDelay)) {
+            timeSendSessionNearest = timeUnixCurrent;
+            await helper.appendToLog(`(COOKIE) found sessionId:: ${sessionId}`, logsNameProgress);
+            sendSessionData(sessionId, nameServiceSocket);
+        }
+    }, 3000);
+}
+
 socket.on(`${nameServiceSocket}_restart`, async () => {
     await helper.appendToLog(`(SOCKET) - RESTART ${nameServiceSocket} - (SERVER)`, logsNameProgress);
     console.log(`(SOCKET) - RESTART ${nameServiceSocket}`);
@@ -182,6 +212,10 @@ async function resetMain() {
     } catch (error) {
         console.error('Error during cleanup:', error.message);
     } finally {
+        if (sessionCookiePoller) {
+            clearInterval(sessionCookiePoller);
+            sessionCookiePoller = undefined;
+        }
         if (context) await context.close().catch(() => {});
         isCollecting = false;
         await helper.delay(5000);
@@ -232,6 +266,24 @@ async function clickButton(logsNameProgress, target, classElement, msg = '_', nu
     }
     await helper.appendToLog(`${action} => ${msg} THẤT BẠI QUÁ 9 LẦN - khởi động lại`, logsNameProgress);
     await resetMain();
+}
+
+async function clickButtonOptional(logsNameProgress, target, classElement, msg = '_', numberClick = 1) {
+    const action = numberClick > 1 ? 'DOUBLE CLICK' : 'CLICK';
+    for (let retryCount = 1; retryCount <= 3; retryCount++) {
+        await helper.delay(500);
+        try {
+            const el = await target.$(classElement);
+            if (el) {
+                await el.click({ clickCount: numberClick });
+                await helper.appendToLog(`${action} => ${msg} THÀNH CÔNG`, logsNameProgress);
+                return true;
+            }
+        } catch (e) {}
+        await helper.appendToLog(`${action} => ${msg} KHÔNG TÌM THẤY (lần ${retryCount}) - BỎ QUA`, logsNameProgress);
+        await helper.delay(1000);
+    }
+    return false;
 }
 
 async function scrollDownSlowly(logsNameProgress, frame, duration = 2000, msg = 'SCROLL DOWN') {
