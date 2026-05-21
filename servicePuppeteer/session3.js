@@ -82,7 +82,7 @@ async function main() {
             });
         }
 
-        await page.goto(process.env.DOMAIN, { waitUntil: 'networkidle2', timeout: 60000 });
+        await page.goto(process.env.DOMAIN, { waitUntil: 'domcontentloaded', timeout: 120000 });
         console.log('Trang web đã được load xong');
 
         // login
@@ -99,7 +99,7 @@ async function main() {
         // redirect to baccarat sexy
         await helper.delay(1000);
         await clickButton(logsNameProgress, page, 'div.header_nav_list div.nav_item:nth-child(2) div.nav_item_btn.LIVE div.name1', 'VÀO MENU GAME SEXY');
-        await page.waitForNavigation({ waitUntil: 'networkidle2' });
+        await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 120000 });
         await helper.delay(1000);
         await scrollDownSlowly(logsNameProgress, page, 1000, 'CUỘN XUỐNG - TÌM NÚT BUTTON VÀO GAME');
         await helper.delay(1000);
