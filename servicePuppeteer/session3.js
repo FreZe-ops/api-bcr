@@ -5,6 +5,7 @@ const fs = require('fs').promises;
 const path = require('path');
 
 const { request, imageCapcha, helper } = require('../utilities');
+const { pipelineLog } = require('../utilities/pipelineLog');
 const { account_3: account } = require('./account.puppeteer')
 
 let isCollecting = false;
@@ -20,14 +21,17 @@ const username_game = account.username_game;
 const password_game = account.password_game;
 const nameServiceSocket = account.nameServiceSocket;
 const logsNameProgress = account.logsNameProgress;
+const logStep = (step, message, extra) => pipelineLog(nameServiceSocket, step, message, extra);
 
 main()
 socket = io(`${process.env.SERVER_HOSTNAME}:${process.env.SERVER_PORT}`);
-socket.on('connect', () => console.log('(SOCKET) Connecting'));
-socket.on('disconnect', () => console.log('(SOCKET) Disconnected'));
+socket.on('connect', () => logStep('STEP_00', 'socket connected', { id: socket.id, url: `${process.env.SERVER_HOSTNAME}:${process.env.SERVER_PORT}` }));
+socket.on('disconnect', () => logStep('STEP_00', 'socket disconnected'));
+socket.on('connect_error', (err) => logStep('STEP_00', 'socket connect_error', err.message));
 
 async function main() {
     try {
+        logStep('STEP_01', 'launch browser start', { userDataDir: account.userDataDir });
         browser = await puppeteer.launch({
             headless: 'new',
             // headless: false,
@@ -44,35 +48,40 @@ async function main() {
         });
         await page.setViewport({ width, height });
         await page.setUserAgent(process.env.USER_AGENT);
+        logStep('STEP_01', 'browser ready', { viewport: { width, height }, domain: process.env.DOMAIN });
 
         await helper.appendToLog('BẮT ĐẦU CHƯƠNG TRÌNH - GHI LOGS', logsNameProgress);
         await helper.appendToLog('='.repeat(50), logsNameProgress);
 
         page.on('error', async err => {
+            logStep('STEP_ERR', 'page error', err.message);
             await helper.appendToLog(`Page error: ${err.message}`, logsNameProgress);
         });
 
         page.on('pageerror', async err => {
-            await helper.appendToLog(`Page uncaught exception : ${err.message}`, logsNameProgress);
+            const msg = err?.message || (typeof err === 'object' ? JSON.stringify(err) : String(err));
+            logStep('STEP_ERR', 'page uncaught exception', msg);
+            await helper.appendToLog(`Page uncaught exception : ${msg}`, logsNameProgress);
         });
 
         function startCollectingResponses(page, frames = []) {
-            isCollecting = true; // mở cờ khi được kích hoạt
+            isCollecting = true;
+            logStep('STEP_13', 'start collecting network responses', { frameCount: frames.length });
             const handleResponse = async (response) => {
-                const resSession = await request.CollectingResponseSession(response, isCollecting);
+                const resSession = await request.CollectingResponseSession(response, isCollecting, nameServiceSocket);
                 const timeUnixCurrent = helper.getCurrentTime().timeUnix;
 
-                // check định dạng session và thời gian gửi sessionId đến server
-                if (typeof resSession === 'string' && /^[a-zA-Z0-9]+$/.test(resSession) && timeUnixCurrent > (timeSendSessionNearest + timeSendSessionDelay)) {
-                    timeSendSessionNearest = timeUnixCurrent;
-                    sendSessionData(resSession, nameServiceSocket)
+                if (typeof resSession === 'string' && /^[a-zA-Z0-9]+$/.test(resSession)) {
+                    if (timeUnixCurrent > (timeSendSessionNearest + timeSendSessionDelay)) {
+                        timeSendSessionNearest = timeUnixCurrent;
+                        sendSessionData(resSession, nameServiceSocket);
+                    } else {
+                        logStep('STEP_14', 'session captured but throttled', {
+                            sessionId: resSession.slice(0, 12),
+                            waitMs: (timeSendSessionNearest + timeSendSessionDelay) - timeUnixCurrent,
+                        });
+                    }
                 }
-
-                // if ((timeSendSessionNearest + ((60 * 1000) * 5)) < timeUnixCurrent) {
-                //     await helper.appendToLog('5 phút vẫn chưa có session - bắt đầu khởi động lại (bắt ở tool session)', logsNameProgress);
-                //     await resetMain();
-                //     return;
-                // }
             };
 
             // Gắn listener cho page và tất cả các frame
@@ -82,53 +91,68 @@ async function main() {
             });
         }
 
+        logStep('STEP_02', 'goto domain start', process.env.DOMAIN);
         await page.goto(process.env.DOMAIN, { waitUntil: 'domcontentloaded', timeout: 120000 });
-        console.log('Trang web đã được load xong');
+        logStep('STEP_02', 'goto domain OK', page.url());
 
         // login
+        logStep('STEP_03', 'login flow start');
         await clickButton(logsNameProgress, page, process.env.CLOSE_DIALOG_WELCOME, 'ĐÓNG THÔNG BÁO SỰ KIỆN');
         await clickButton(logsNameProgress, page, process.env.SHOW_DIALOG_LOGIN, 'HIỂN THỊ DIALOG ĐĂNG NHẬP');
+        logStep('STEP_05', 'captcha start');
         const codeCapcha = await imageCapcha.getCodeCapchaLogin(logsNameProgress, page)
+        logStep('STEP_05', 'captcha OK', codeCapcha);
         await fillInput(logsNameProgress, page, process.env.INPUT_USERNAME_LOGIN, username_game);
         await fillInput(logsNameProgress, page, process.env.INPUT_PASSWORD_LOGIN, password_game);
         await fillInput(logsNameProgress, page, process.env.INPUT_CAPCHA_LOGIN, codeCapcha);
         await clickButton(logsNameProgress, page, 'button[type="submit"].submit_btn', 'ĐĂNG NHẬP');
+        logStep('STEP_06', 'login submitted');
         await helper.delay(5000);
         await clickButton(logsNameProgress, page, process.env.SHOW_DIALOG_LOGIN_SUCCESS, 'ĐÓNG THÔNG BÁO CẢNH BÁO KHI HOÀN TẤT ĐĂNG NHẬP');
+        logStep('STEP_07', 'login flow done');
 
         // redirect to baccarat sexy
         await helper.delay(1000);
+        logStep('STEP_08', 'navigate to game sexy menu');
         await clickButton(logsNameProgress, page, 'div.header_nav_list div.nav_item:nth-child(2) div.nav_item_btn.LIVE div.name1', 'VÀO MENU GAME SEXY');
         await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 120000 });
+        logStep('STEP_08', 'game sexy menu loaded', page.url());
         await helper.delay(1000);
         await scrollDownSlowly(logsNameProgress, page, 1000, 'CUỘN XUỐNG - TÌM NÚT BUTTON VÀO GAME');
         await helper.delay(1000);
         await clickButton(logsNameProgress, page, '.play-btn', 'VÀO SẢNH SEXY');
+        logStep('STEP_09', 'enter game hall clicked, waiting 20s');
         await helper.delay(20000);
 
         // iframe SEXY GAME
+        logStep('STEP_10', 'wait iframe#seamless-game');
         await page.waitForFunction(
             () => !!document.querySelector('iframe#seamless-game'),
             { timeout: 60000, polling: 'mutation' }
         );
         const seamlessFrameElement = await page.$('iframe#seamless-game');
         seamlessFrame = await seamlessFrameElement.contentFrame();
+        logStep('STEP_10', 'iframe#seamless-game ready');
 
         // iframe GAME HALL
+        logStep('STEP_11', 'wait iframe#iframeGameHall');
         await seamlessFrame.waitForFunction(
             () => !!document.querySelector('iframe#iframeGameHall'),
             { timeout: 60000, polling: 'mutation' }
         );
         let gameHallFrameElement = await seamlessFrame.$('iframe#iframeGameHall');
         gameHallFrame = await gameHallFrameElement.contentFrame();
+        logStep('STEP_11', 'iframe#iframeGameHall ready');
 
         // iframe GAME
+        logStep('STEP_12', 'wait iframe#iframeGame');
         await seamlessFrame.waitForFunction(
             () => !!document.querySelector('iframe#iframeGame'),
             { timeout: 60000, polling: 'mutation' }
         );
         let gameCurrentFrameElement = await seamlessFrame.$('iframe#iframeGame');
         gameCurrentFrame = await gameCurrentFrameElement.contentFrame();
+        logStep('STEP_12', 'iframe#iframeGame ready');
 
         await scrollDownSlowly(logsNameProgress, page, 2000, 'CUỘN TRANG XUỐNG > TOÀN MÀN HÌNH GAME');
         await clickButtonNotifiGame(logsNameProgress, gameHallFrame, 'button.size-8.cursor-pointer.outline-none', 'TẮT THÔNG BÁO GAME SEXY');
@@ -139,6 +163,7 @@ async function main() {
 
         // lấy session
         startCollectingResponses(page, [seamlessFrame, gameHallFrame, gameCurrentFrame]);
+        logStep('STEP_15', 'enter baccarat cycle');
 
         // duy trì seesion game
         await startBaccaratCycle(gameHallFrame, gameCurrentFrame);
@@ -179,14 +204,20 @@ async function main() {
         await helper.appendToLog('='.repeat(50), logsNameProgress);
 
     } catch (error) {
+        logStep('STEP_ERR', 'main function error', { message: error.message, stack: error.stack?.split('\n')[0] });
         await helper.appendToLog(`Error in main function: ${error.message}`, logsNameProgress);
         resetMain();
     }
 }
 
 async function sendSessionData(sessionId, nameService) {
-    if (socket && sessionId !== undefined) {
+    if (!socket?.connected) {
+        logStep('STEP_14', 'socket not connected, cannot emit session', { sessionId: sessionId?.slice(0, 12) });
+        return;
+    }
+    if (sessionId !== undefined) {
         socket.emit('session', { sessionId, nameService, stampTime: helper.getCurrentTime().timeUnix });
+        logStep('STEP_14', 'emit session to server', { sessionId: sessionId.slice(0, 12), nameService });
         await helper.appendToLog(`(SOCKET) send server sessionId:: ${sessionId}`, logsNameProgress);
     }
 }
@@ -274,6 +305,7 @@ async function clickButton(logsNameProgress, page, classElement, msg = "_", numb
             return;
         } else {
             retryCount++;
+            logStep('STEP_UI', `${action} fail`, { msg, selector: classElement, attempt: retryCount });
             await helper.appendToLog(`${action} => ${msg} THẤT BẠI (lần ${retryCount})`, logsNameProgress);
             await helper.delay(2000);
         }

@@ -43,15 +43,17 @@ async function getCodeCapchaLogin(logsNameProgress, page) {
         return img ? img.getAttribute('src') : null;
     });
 
-
     if (!base64Image) {
         await appendToLog("KHÔNG LẤY ĐƯỢC ẢNH CAPCHA - THỬ LẠI", logsNameProgress)
+        console.log(`[CAPTCHA][STEP_05] no captcha img found | selector=div.captcha_box img`);
         return getCodeCapchaLogin(logsNameProgress, page)
     }
     await appendToLog("LẤY ẢNH CAPCHA THÀNH CÔNG", logsNameProgress)
+    console.log(`[CAPTCHA][STEP_05] captcha img captured | length=${base64Image.length}`);
     const codeCapcha = await handleCapchaBase64ToCode(base64Image)
 
     if (codeCapcha.code.length !== 4 || !codeCapcha.success) {
+        console.log(`[CAPTCHA][STEP_05] OCR fail | code=${codeCapcha.code} | success=${codeCapcha.success}`);
         await delay(500);
         await clickButton(logsNameProgress, page, '.captcha_box', 'LỖI GIẢI MÃ CAPCHA - ĐỔI MÃ CAPCHA KHÁC');
         return getCodeCapchaLogin(logsNameProgress, page)

@@ -1,10 +1,11 @@
 const axios = require('axios');
 require('dotenv').config();
 
-const { getCurrentTime } = require('./helper');
+const SESSION_URL_DOMAINS = ['bfscg.awamat.com', 'gklam.com', 'vcnh2k.gklam.com'];
 
 async function requestData(sessionId) {
     const url = process.env.URI_REQUEST_DATA + sessionId;
+    console.log(`[CRAWL][STEP_S2] requestData start | sessionId=${sessionId?.slice(0, 12)}... | url=${process.env.URI_REQUEST_DATA}`);
 
     const headers = {
         "accept-language": "vi-VN,vi;q=0.9",
@@ -18,47 +19,54 @@ async function requestData(sessionId) {
 
     try {
         const response = await axios.post(url, payload, { headers });
+        const tableCount = Array.isArray(response.data?.tableItems) ? response.data.tableItems.length : 0;
+        console.log(`[CRAWL][STEP_S2] requestData OK | tableItems=${tableCount} | keys=${Object.keys(response.data || {}).join(',')}`);
         return response.data;
     } catch (error) {
-        console.error('Error calling API:', error.message);
+        console.error(`[CRAWL][STEP_S2] requestData FAIL | ${error.message} | status=${error.response?.status}`);
         return {};
     }
 }
 
-async function CollectingResponseSession(response, isCollecting) {
+async function CollectingResponseSession(response, isCollecting, logService = 'SESSION') {
     if (!isCollecting) return;
 
     const url = response.url();
-    const status = response.status();
     const request = response.request();
     const resourceType = request.resourceType();
-    try {
-        // Debug log để kiểm tra
-        console.log(`[DEBUG] Response: ${resourceType} - ${url}`);
-        console.log(await response.text());
-        if ((resourceType === 'xhr' || resourceType === 'fetch') && url.includes('https://bfscg.awamat.com')) {
-            let responseBody = 'NONE';
-            let sessionId = undefined;
-            responseBody = await response.text();
 
-            const match = url.match(/jsessionid=([^?]+)/);
-            sessionId = match ? match[1] : undefined;
-            
-            console.log(`[SESSION] Found sessionId: ${sessionId} from URL: ${url}`);
-            return sessionId
+    try {
+        const urlMatches = SESSION_URL_DOMAINS.some((domain) => url.includes(domain));
+        if ((resourceType === 'xhr' || resourceType === 'fetch') && urlMatches) {
+            let sessionId;
+            const urlMatch = url.match(/jsessionid=([^?&\s]+)/i);
+            if (urlMatch) sessionId = urlMatch[1];
+
+            if (!sessionId) {
+                const headers = request.headers();
+                const cookieHeader = headers['cookie'] || headers['Cookie'] || '';
+                const cookieMatch = cookieHeader.match(/JSESSIONID=([^;]+)/i);
+                if (cookieMatch) sessionId = cookieMatch[1];
+            }
+
+            if (sessionId) {
+                console.log(`[${logService}][STEP_13] capture sessionId=${sessionId.slice(0, 12)}... | domain match | url=${url.slice(0, 100)}`);
+                return sessionId;
+            }
+
+            console.log(`[${logService}][STEP_13] domain matched but no sessionId | status=${response.status()} | url=${url.slice(0, 100)}`);
         }
     } catch (error) {
-        console.error('[ERROR] CollectingResponseSession:', error.message)
-        return undefined
+        console.error(`[${logService}][STEP_13] CollectingResponseSession error: ${error.message}`);
+        return undefined;
     }
-    return undefined
+    return undefined;
 }
 
 async function CollectingResponseSessionV2(response, isCollecting) {
     if (!isCollecting) return;
 
     const url = response.url();
-    const status = response.status();
     const request = response.request();
     const resourceType = request.resourceType();
 
