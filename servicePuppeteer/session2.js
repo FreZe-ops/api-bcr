@@ -57,12 +57,15 @@ async function main() {
         function startCollectingResponses(page, frames = []) {
             isCollecting = true;
             const handleResponse = async (response) => {
+                const url = response.url();
                 const resSession = await request.CollectingResponseSession(response, isCollecting);
                 const timeUnixCurrent = helper.getCurrentTime().timeUnix;
-                if (typeof resSession === 'string' && /^[^;\s]+$/.test(resSession) && timeUnixCurrent > (timeSendSessionNearest + timeSendSessionDelay)) {
-                    timeSendSessionNearest = timeUnixCurrent;
-                    sendSessionData(resSession, nameServiceSocket);
-                }
+                if (typeof resSession !== 'string' || !/^[^;\s]+$/.test(resSession)) return;
+                if (timeUnixCurrent <= (timeSendSessionNearest + timeSendSessionDelay)) return;
+                if (!/queryInitWebGameHall|gklam\.com/i.test(url)) return;
+                timeSendSessionNearest = timeUnixCurrent;
+                await helper.appendToLog(`(SESSION/hall) sessionId:: ${resSession}`, logsNameProgress);
+                sendSessionData(resSession, nameServiceSocket);
             };
             page.on('response', handleResponse);
             frames.forEach(frame => { if (frame && frame.on) frame.on('response', handleResponse); });
@@ -195,8 +198,12 @@ async function getSessionFromCookies() {
     if (!context) return undefined;
     try {
         const cookies = await context.cookies();
-        const sessionCookie = cookies.find(cookie => /JSESSIONID/i.test(cookie.name));
-        return sessionCookie?.value;
+        const gameCookies = cookies.filter(cookie =>
+            /JSESSIONID/i.test(cookie.name) &&
+            /gklam\.com/i.test(cookie.domain || '')
+        );
+        if (!gameCookies.length) return undefined;
+        return gameCookies[gameCookies.length - 1].value;
     } catch (error) {
         await helper.appendToLog(`Không đọc được cookie session: ${error.message}`, logsNameProgress);
         return undefined;
@@ -211,7 +218,7 @@ function startSessionCookiePolling() {
         const timeUnixCurrent = helper.getCurrentTime().timeUnix;
         if (sessionId && timeUnixCurrent > (timeSendSessionNearest + timeSendSessionDelay)) {
             timeSendSessionNearest = timeUnixCurrent;
-            await helper.appendToLog(`(COOKIE) found sessionId:: ${sessionId}`, logsNameProgress);
+            await helper.appendToLog(`(COOKIE/gklam) found sessionId:: ${sessionId}`, logsNameProgress);
             sendSessionData(sessionId, nameServiceSocket);
         }
     }, 3000);

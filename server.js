@@ -141,11 +141,22 @@ setInterval(async () => {
         const selectedSession = availableSessions[randomIndex];
         console.log(`SỬ DỤNG SESSION => ${selectedSession.sessionId}`)
         const data = await requestData(selectedSession.sessionId);
-        if (!data.tableItems) {
-            console.warn('[CRAWL] requestData returned no tableItems', {
+        if (!Array.isArray(data.tableItems) || data.tableItems.length === 0) {
+            console.warn('[CRAWL] invalid hall session — no tableItems', {
                 keys: data && typeof data === 'object' ? Object.keys(data) : [],
                 sessionName: selectedSession.nameService,
+                sessionId: selectedSession.sessionId?.slice(0, 8),
             });
+            for (const key of sessionKeys) {
+                if (sessionList.session[key].sessionId === selectedSession.sessionId) {
+                    sessionList.session[key] = {
+                        ...sessionList.session[key],
+                        nameService: undefined,
+                        sessionId: undefined,
+                        stampTime: -1,
+                    };
+                }
+            }
             return
         }
         console.log(`[CRAWL] received tableItems=${data.tableItems.length} from ${selectedSession.nameService}`)

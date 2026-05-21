@@ -19,7 +19,15 @@ async function requestData(sessionId) {
     try {
         const response = await axios.post(url, payload, { headers });
         const tableCount = Array.isArray(response.data?.tableItems) ? response.data.tableItems.length : 0;
-        console.log(`[REQUEST_DATA] status=${response.status} tableItems=${tableCount}`);
+        console.log(`[REQUEST_DATA] status=${response.status} tableItems=${tableCount} session=${sessionId.slice(0, 8)}...`);
+        if (tableCount === 0) {
+            const body = response.data && typeof response.data === 'object' ? response.data : {};
+            console.warn('[REQUEST_DATA] empty hall — wrong jsessionid or session expired', {
+                keys: Object.keys(body),
+                status: body.status ?? body.errorCode ?? body.code,
+                message: body.message ?? body.msg ?? body.errorMessage,
+            });
+        }
         return response.data;
     } catch (error) {
         console.error('[REQUEST_DATA] Error calling API:', {
@@ -45,6 +53,7 @@ async function CollectingResponseSession(response, isCollecting) {
             let sessionId = undefined;
             const urlMatch = url.match(/jsessionid[=;/]([^?&;\s]+)/i);
             if (urlMatch) sessionId = urlMatch[1];
+            const isHallQuery = /queryInitWebGameHall/i.test(url);
             if (!sessionId) {
                 const headers = request.headers();
                 const cookieHeader = headers['cookie'] || headers['Cookie'] || '';
@@ -57,7 +66,10 @@ async function CollectingResponseSession(response, isCollecting) {
                 const cookieMatch = setCookieHeader.match(/JSESSIONID=([^;]+)/i);
                 if (cookieMatch) sessionId = cookieMatch[1];
             }
-            if (sessionId) console.log(`[SESSION] Found sessionId: ${sessionId} from URL: ${url}`);
+            if (sessionId) {
+                const tag = isHallQuery ? 'HALL' : 'network';
+                console.log(`[SESSION/${tag}] Found sessionId: ${sessionId} from URL: ${url}`);
+            }
             return sessionId || undefined;
         }
     } catch (error) {
