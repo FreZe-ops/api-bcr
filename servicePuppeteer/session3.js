@@ -6,6 +6,7 @@ const path = require('path');
 
 const { request, imageCapcha, helper } = require('../utilities');
 const { pipelineLog } = require('../utilities/pipelineLog');
+const { openLoginDialog } = require('./loginHelper');
 const { account_3: account } = require('./account.puppeteer')
 
 let isCollecting = false;
@@ -93,7 +94,13 @@ async function main() {
         // login
         logStep('STEP_03', 'login flow start');
         await clickButtonOptional(logsNameProgress, page, process.env.CLOSE_DIALOG_WELCOME, 'ĐÓNG THÔNG BÁO SỰ KIỆN');
-        await clickButton(logsNameProgress, page, process.env.SHOW_DIALOG_LOGIN, 'HIỂN THỊ DIALOG ĐĂNG NHẬP');
+        await helper.delay(1000);
+
+        const loginOpened = await openLoginDialog(page, logStep);
+        if (!loginOpened) {
+            throw new Error('Không mở được dialog đăng nhập — kiểm tra selector SHOW_DIALOG_LOGIN trong .env');
+        }
+
         logStep('STEP_05', 'captcha start');
         const codeCapcha = await imageCapcha.getCodeCapchaLogin(logsNameProgress, page)
         logStep('STEP_05', 'captcha OK', codeCapcha);
